@@ -8,6 +8,10 @@ import os
 import json
 import yaml
 import threading
+import subprocess
+import tempfile
+import getpass
+from pathlib import Path
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Set
@@ -16,6 +20,19 @@ from dataclasses import dataclass
 from flask import Flask, render_template, jsonify, request
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+# Load configuration
+def load_config():
+    """Load configuration from config.json"""
+    config_path = Path(__file__).parent / 'config.json'
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        return json.load(f)
+
+# Global configuration
+CONFIG = load_config()
 
 app = Flask(__name__)
 
@@ -299,7 +316,7 @@ class ConfigFileHandler(FileSystemEventHandler):
             threading.Timer(self.refresh_delay, self.analyzer.refresh).start()
 
 # Global analyzer instance
-analyzer = YAMLDiffAnalyzer('/home/letouwen/yamltool/configs')
+analyzer = YAMLDiffAnalyzer(CONFIG['paths']['configs_directory'])
 
 @app.route('/')
 def index():
@@ -382,6 +399,187 @@ def create_config():
     except Exception as e:
         return jsonify({'error': f'Failed to create config: {str(e)}'}), 500
 
+@app.route('/api/submit-slurm', methods=['POST'])
+def submit_slurm_job():
+    """Create sbatch file and submit SLURM job."""
+    data = request.get_json()
+    job_name = data.get('jobName', '').strip()
+    use_gpu = data.get('useGpu', False)
+    memory = data.get('memory', '64G')
+    config_path = data.get('configPath', '').strip()
+    
+    if not job_name:
+        return jsonify({'error': 'Job name is required'}), 400
+    
+    if not config_path:
+        return jsonify({'error': 'Config path is required'}), 400
+    
+    try:
+        # Create sbatch file content
+        sbatch_content = create_sbatch_content(job_name, use_gpu, memory, config_path)
+        
+        # Create temporary sbatch file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+            f.write(sbatch_content)
+            sbatch_file_path = f.name
+        
+        try:
+            # Submit job via SSH
+            job_result = submit_job_via_ssh(sbatch_file_path, job_name)
+            
+            if job_result.get('manual_submission'):
+                return jsonify({
+                    'status': 'ready_for_manual_submission',
+                    'jobName': job_name,
+                    'manual_submission': True,
+                    'sbatch_file': os.path.basename(job_result.get('sbatch_file', '')),
+                    'message': job_result.get('message', 'Sbatch file created for manual submission'),
+                    'instructions': job_result.get('instructions', '')
+                })
+            else:
+                return jsonify({
+                    'status': 'submitted',
+                    'jobId': job_result.get('job_id'),
+                    'sbatchFile': os.path.basename(sbatch_file_path),
+                    'message': job_result.get('message', 'Job submitted successfully')
+                })
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(sbatch_file_path)
+            except:
+                pass
+                
+    except Exception as e:
+        return jsonify({'error': f'Failed to submit job: {str(e)}'}), 500
+
+def create_sbatch_content(job_name, use_gpu, memory, config_path):
+    """Create sbatch file content based on the template."""
+    slurm_config = CONFIG['slurm']
+    
+    # Try to read from template file first
+    template_file = Path(CONFIG['paths']['slurm_template_file'])
+    if template_file.exists():
+        try:
+            with open(template_file, 'r') as f:
+                template_content = f.read()
+            
+            # Replace placeholders in the template
+            content = template_content.format(
+                job_name=job_name,
+                memory=memory,
+                config_path=config_path,
+                gpu_line="#SBATCH --gres=gpu:1               # Request 1 GPU" if use_gpu else "",
+                partition=slurm_config.get('default_partition', 'general'),
+                time=slurm_config.get('default_time', '12:00:00'),
+                nodes=slurm_config.get('default_nodes', 1),
+                output_pattern=slurm_config.get('output_pattern', 'slurm-%j.out'),
+                error_pattern=slurm_config.get('error_pattern', 'slurm-%j.err')
+            )
+            return content
+        except Exception as e:
+            print(f"Warning: Could not read template file {template_file}: {e}")
+            # Fall back to hardcoded template
+    
+    # Fallback hardcoded template
+    gpu_line = "#SBATCH --gres=gpu:1               # Request 1 GPU" if use_gpu else ""
+    
+    return f"""#!/bin/sh
+#SBATCH --job-name={job_name}
+#SBATCH --account=ewi-st-dis
+#SBATCH --qos=medium 
+#SBATCH --partition={slurm_config.get('default_partition', 'general')}        # Request partition.
+#SBATCH --exclude=influ[1-6],insy[15-16],awi[01-02]
+#SBATCH --time={slurm_config.get('default_time', '12:00:00')}            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --nodes={slurm_config.get('default_nodes', 1)}                  # Request 1 node
+#SBATCH --tasks-per-node=1         # Set one task per node
+{gpu_line}
+#SBATCH --mem={memory}
+#SBATCH --mail-type=END            # Set mail type to 'END' to receive a mail when the job finishes. %j is the Slurm jobId
+#SBATCH --output=./output/{slurm_config.get('output_pattern', 'slurm-%j.out')}
+#SBATCH --error=./output/{slurm_config.get('error_pattern', 'slurm-%j.err')}
+
+# Increase file descriptor limit
+ulimit -n 65536
+
+# Assuming you have a dedicated directory for *.sif files
+export APPTAINER_ROOT="/tudelft.net/staff-umbrella/ScalableGraphLearning/apptainer"
+export APPTAINER_NAME="pytorch2.2.2-cuda11.8-ubuntu22.04-Federated.sif"
+
+nvidia-smi
+
+srun apptainer exec \\
+  --nv \\
+  -B /home/nfs/letouwen/megagnn_graphgym:/home/$USER/megagnn_graphgym \\
+  -B /tudelft.net/staff-umbrella/ScalableGraphLearning/lourens/data:/mnt/lourens/data \\
+  -B /tudelft.net/staff-umbrella/ScalableGraphLearning/lourens/exps/:/mnt/lourens/exps/results \\
+  $APPTAINER_ROOT/$APPTAINER_NAME \\
+  python -m MegaGNN.main --cfg {config_path}
+"""
+
+def submit_job_via_ssh(sbatch_file_path, job_name):
+    """Submit job via SSH to login node."""
+    import os
+    try:
+        # Since DAIC requires Kerberos authentication (password-based), 
+        # we cannot use BatchMode. Instead, we'll create the files locally
+        # and provide instructions for manual submission.
+        
+        ssh_host = CONFIG['slurm']['ssh_host']
+        working_dir = CONFIG['paths']['working_directory']
+        
+        print(f"{ssh_host} cluster requires password authentication...")
+        print("Creating sbatch file for manual submission...")
+        
+        # Read the sbatch file content
+        with open(sbatch_file_path, 'r') as f:
+            sbatch_content = f.read()
+        
+        # Create a local copy with a proper name
+        local_sbatch_name = f"run_{job_name}.sh"
+        local_sbatch_path = os.path.join(working_dir, local_sbatch_name)
+        
+        with open(local_sbatch_path, 'w') as f:
+            f.write(sbatch_content)
+        
+        # Make it executable
+        os.chmod(local_sbatch_path, 0o755)
+        
+        print(f"Created sbatch file: {local_sbatch_path}")
+        
+        # Since we can't automate the SSH with password, return instructions
+        instructions = f"""
+MANUAL SUBMISSION REQUIRED:
+
+Copy and paste these commands in your terminal:
+
+ssh {ssh_host}
+cd {working_dir}
+sbatch {local_sbatch_path}
+squeue -u $USER
+exit
+
+After the job completes, check the output:
+
+ssh {ssh_host}
+cat slurm-*.out
+exit
+
+The sbatch file has been created at: {local_sbatch_path}
+"""
+        
+        return {
+            'job_id': None,
+            'message': 'Sbatch file created for manual submission',
+            'instructions': instructions,
+            'sbatch_file': local_sbatch_path,
+            'manual_submission': True
+        }
+        
+    except Exception as e:
+        raise Exception(f"Failed to prepare job submission: {str(e)}")
+
 def setup_file_watcher():
     """Set up file system watcher."""
     event_handler = ConfigFileHandler(analyzer)
@@ -398,19 +596,28 @@ if __name__ == '__main__':
     
     # Start file watcher (optional)
     observer = None
-    try:
-        print("Setting up file watcher...")
-        observer = setup_file_watcher()
-        print("File watcher started successfully")
-    except Exception as e:
-        print(f"Warning: Could not start file watcher: {e}")
-        print("Manual refresh will be required for file changes")
+    file_watching_config = CONFIG.get('file_watching', {})
+    if file_watching_config.get('enabled', True):
+        try:
+            print("Setting up file watcher...")
+            observer = setup_file_watcher()
+            print("File watcher started successfully")
+        except Exception as e:
+            print(f"Warning: Could not start file watcher: {e}")
+            print("Manual refresh will be required for file changes")
+    else:
+        print("File watching disabled in configuration")
     
     try:
+        app_config = CONFIG['app']
+        host = app_config.get('host', '0.0.0.0')
+        port = app_config.get('port', 5000)
+        debug = app_config.get('debug', True)
+        
         print("Starting web server...")
-        print("Access the application at: http://localhost:5000")
-        print("For SSH access, use port forwarding: ssh -L 5000:localhost:5000 user@host")
-        app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+        print(f"Access the application at: http://localhost:{port}")
+        print(f"For SSH access, use port forwarding: ssh -L {port}:localhost:{port} user@host")
+        app.run(debug=debug, host=host, port=port, use_reloader=False)
     except KeyboardInterrupt:
         if observer:
             observer.stop()

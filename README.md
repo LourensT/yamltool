@@ -1,107 +1,99 @@
-# YAML Config Diff Viewer
+# YAML Config Tool
 
-A web-based tool to visualize differences between YAML configuration files in a hierarchical tree structure.
+Tool to visualize differences between YAML configuration files, create new configurations, and submit SLURM jobs.
 
-## Features
+### Use
 
-- **Hierarchical Tree View**: Browse your YAML configs organized by folder structure
-- **Real-time Diff Analysis**: See exactly which values differ between files at the same directory level
-- **Web-based Interface**: Access via browser, perfect for remote SSH environments
-- **Auto-refresh**: Automatically detects file changes (when file watcher works)
-- **Manual Refresh**: Refresh button for manual updates
-
-## Installation
-
-1. **Create conda environment**:
-   ```bash
-   conda create -n yamltool python=3.10 -y
-   conda activate yamltool
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   pip install flask pyyaml watchdog
-   ```
-
-## Usage
-
-1. **Start the application**:
-   ```bash
-   conda activate yamltool
-   python app.py
-   ```
-
-2. **Access the web interface**:
-   - Local access: http://localhost:5000
-   - SSH port forwarding: `ssh -L 5000:localhost:5000 user@host`
-
-## How it Works
-
-### Tree Structure (Left Panel)
-- Shows the folder structure of your `configs/` directory
-- 📁 Folders can be expanded to show contents
-- 📄 YAML files are displayed as leaves
-- Click any folder or file to analyze differences
-
-### Differences Panel (Right Panel)
-- Shows configuration keys where values differ between files
-- Files at the same directory level are compared
-- Different values are highlighted
-- Missing values are shown as "(missing)"
-
-### Difference Detection Logic
-- **Directory Level Comparison**: Files are grouped by directory level
-- **Flattened Key Analysis**: Nested YAML structures are flattened to compare all keys
-- **Value Comparison**: Values are compared as strings, highlighting differences
-- **Missing Key Detection**: Shows when a key exists in some files but not others
-
-## Example
-
-For files in `configs/FedAML-Large-HI/`:
-- `FedAML-Large-HI-MegaGNN-PNA-base.yaml`
-- `FedAML-Large-HI-MegaGNN-PNA-cluster.yaml`
-
-The tool will compare these files and show differences like:
-- `seed: 42` vs `seed: 18`
-- `wandb.use: True` vs `wandb.use: False`
-- `federation.strategy: fedprox` vs `federation.strategy: fedavg`
+1. Place `app.py`, `templates/index.html`, and `config.json` in your project directory
+2. Edit `config.json` to match your paths and settings
+3. Run `python app.py`
+4. Open http://localhost:5000 or as specicified in config
 
 ## Configuration
 
-The application is configured to read from `/home/letouwen/yamltool/configs/`. To change this:
+The tool is configured via `config.json`:
 
-1. Edit `app.py` line 227:
-   ```python
-   analyzer = YAMLDiffAnalyzer('/path/to/your/configs')
-   ```
-
-## Technical Details
-
-- **Backend**: Flask web server with Python
-- **YAML Parsing**: PyYAML library
-- **File Watching**: Watchdog library (optional, falls back to manual refresh)
-- **Frontend**: Pure HTML/CSS/JavaScript with responsive design
-- **Styling**: Dark theme optimized for development environments
-
-## Troubleshooting
-
-### File Watcher Issues
-If you see "inotify watch limit reached":
-- The tool will still work with manual refresh
-- Use the "Refresh" button to update after file changes
-- To increase inotify limits: `echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf`
-
-### Port Already in Use
-If port 5000 is busy, edit `app.py` and change:
-```python
-app.run(debug=True, host='0.0.0.0', port=5001, use_reloader=False)
+### App Settings
+```json
+{
+  "app": {
+    "host": "0.0.0.0",     // Server host
+    "port": 5000,          // Server port
+    "debug": true          // Debug mode
+  }
+}
 ```
 
-### No YAML Files Found
-- Ensure your YAML files have `.yaml` extension
-- Check the configs directory path in the application
-- Verify file permissions
+### Paths
+```json
+{
+  "paths": {
+    "configs_directory": "/path/to/configs",     // Directory containing YAML files
+    "working_directory": "/path/to/work",        // Working directory for tool
+    "slurm_template_file": "/path/to/run.sh"     // SLURM template file (optional)
+  }
+}
+```
 
-## License
+### SLURM Settings
+```json
+{
+  "slurm": {
+    "default_partition": "general",
+    "default_time": "02:00:00",
+    "default_nodes": 1,
+    "default_cpus_per_task": 4,
+    "default_mem": "8G",
+    "default_job_name": "yamltool_job",
+    "ssh_host": "daic",                          // SSH hostname for cluster
+    "ssh_user": "username",
+    "output_pattern": "slurm-%j.out",
+    "error_pattern": "slurm-%j.err"
+  }
+}
+```
 
-MIT License - feel free to modify and use as needed.
+### File Watching
+```json
+{
+  "file_watching": {
+    "enabled": true,                             // Enable automatic file watching
+    "recursive": true,                           // Watch subdirectories
+    "patterns": ["*.yaml", "*.yml"]              // File patterns to watch
+  }
+}
+```
+
+## SLURM Template
+
+If you provide a `slurm_template_file` in your configuration, the tool will use it as a template for job submissions. The template can include placeholders:
+
+- `{job_name}` - Job name
+- `{memory}` - Memory allocation
+- `{config_path}` - Path to config file
+- `{gpu_line}` - GPU allocation line (if GPU requested)
+- `{partition}` - SLURM partition
+- `{time}` - Time limit
+- `{nodes}` - Number of nodes
+- `{output_pattern}` - Output file pattern
+- `{error_pattern}` - Error file pattern
+
+Example template:
+```bash
+#!/bin/sh
+#SBATCH --job-name={job_name}
+#SBATCH --partition={partition}
+#SBATCH --time={time}
+#SBATCH --nodes={nodes}
+#SBATCH --mem={memory}
+{gpu_line}
+#SBATCH --output={output_pattern}
+#SBATCH --error={error_pattern}
+
+## Dependencies
+
+using python 3.10
+
+```bash
+pip install flask pyyaml watchdog
+```

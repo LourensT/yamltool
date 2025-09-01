@@ -334,6 +334,110 @@
         .status-disconnected {
             background-color: #f44336;
         }
+
+        /* SLURM Form Styles */
+        .slurm-form {
+            background-color: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .slurm-form h3 {
+            color: #ffffff;
+            margin-top: 0;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+        }
+
+        .slurm-form-group {
+            margin-bottom: 15px;
+        }
+
+        .slurm-form-group label {
+            display: block;
+            color: #cccccc;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .slurm-form-group input[type="text"],
+        .slurm-form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #1e1e1e;
+            color: #ffffff;
+            font-family: monospace;
+        }
+
+        .slurm-form-group input[type="text"]:focus,
+        .slurm-form-group select:focus {
+            outline: none;
+            border-color: #0078d4;
+        }
+
+        .slurm-form-group input[type="text"][readonly] {
+            background-color: #2a2a2a;
+            color: #aaaaaa;
+        }
+
+        .slurm-form-group input[type="checkbox"] {
+            margin-right: 8px;
+        }
+
+        .slurm-form-actions {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #444;
+        }
+
+        .submit-job-btn {
+            background-color: #0078d4;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .submit-job-btn:hover:not(:disabled) {
+            background-color: #106ebe;
+        }
+
+        .submit-job-btn:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
+        .job-status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .job-status .success {
+            background-color: #1a4c2e;
+            border: 1px solid #4caf50;
+            color: #90ee90;
+        }
+
+        .job-status .error {
+            background-color: #4c1a1a;
+            border: 1px solid #f44336;
+            color: #ffb3b3;
+        }
+
+        .job-status .info {
+            background-color: #1a3a4c;
+            border: 1px solid #2196f3;
+            color: #87ceeb;
+        }
     </style>
 </head>
 <body>
@@ -488,7 +592,12 @@
             `;
             
             if (differences.length === 0) {
-                container.innerHTML = header + '<div class="no-differences">No differences found</div>';
+                if (type === 'file') {
+                    // Show SLURM configuration form for single files
+                    container.innerHTML = header + renderSlurmForm(path);
+                } else {
+                    container.innerHTML = header + '<div class="no-differences">No differences found</div>';
+                }
                 return;
             }
             
@@ -720,6 +829,144 @@
                     setStatus(false);
                 }
             }, 2000); // Check every 2 seconds
+        }
+
+        // Render SLURM configuration form
+        function renderSlurmForm(filePath) {
+            return `
+                <div class="slurm-form">
+                    <h3>Submit SLURM Batch Job</h3>
+                    <div class="slurm-form-group">
+                        <label for="jobName">Job Name:</label>
+                        <input type="text" id="jobName" value="my-job" required>
+                    </div>
+                    <div class="slurm-form-group">
+                        <label for="useGpu">Use GPU:</label>
+                        <input type="checkbox" id="useGpu" checked>
+                    </div>
+                    <div class="slurm-form-group">
+                        <label for="memory">Memory:</label>
+                        <select id="memory">
+                            <option value="32G">32G</option>
+                            <option value="64G" selected>64G</option>
+                            <option value="128G">128G</option>
+                            <option value="256G">256G</option>
+                        </select>
+                    </div>
+                    <div class="slurm-form-group">
+                        <label for="configPath">Config Path:</label>
+                        <input type="text" id="configPath" value="${filePath}" readonly>
+                    </div>
+                    <div class="slurm-form-actions">
+                        <button onclick="submitSlurmJob()" class="submit-job-btn">
+                            Submit Job to SLURM
+                        </button>
+                    </div>
+                    <div id="jobStatus" class="job-status"></div>
+                </div>
+            `;
+        }
+
+        // Submit SLURM job
+        async function submitSlurmJob() {
+            const jobName = document.getElementById('jobName').value.trim();
+            const useGpu = document.getElementById('useGpu').checked;
+            const memory = document.getElementById('memory').value;
+            const configPath = document.getElementById('configPath').value;
+            const statusDiv = document.getElementById('jobStatus');
+            const submitBtn = document.querySelector('.submit-job-btn');
+
+            if (!jobName) {
+                statusDiv.innerHTML = '<div class="error">Please enter a job name</div>';
+                return;
+            }
+
+            // Disable button and show loading
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+            statusDiv.innerHTML = '<div class="info">Creating sbatch file and submitting job...</div>';
+
+            try {
+                const response = await fetch('/api/submit-slurm', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        jobName: jobName,
+                        useGpu: useGpu,
+                        memory: memory,
+                        configPath: configPath
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    if (result.manual_submission) {
+                        statusDiv.innerHTML = `
+                            <div class="success">
+                                <strong>Sbatch file created successfully!</strong><br>
+                                Status: ${result.status}<br>
+                                <div style="margin-top: 15px; padding: 10px; background: #e8f4fd; border-left: 4px solid #2196F3;">
+                                    <pre style="white-space: pre-wrap; background: #f5f5f5; padding: 10px; margin: 10px 0; text-align: left;">${result.instructions}</pre>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        statusDiv.innerHTML = `
+                            <div class="success">
+                                <strong>Job submitted successfully!</strong><br>
+                                Job ID: ${result.jobId || 'N/A'}<br>
+                                Sbatch file: ${result.sbatchFile}<br>
+                                Status: ${result.status}
+                            </div>
+                        `;
+                    }
+                } else {
+                    // Enhanced error handling for SSH issues
+                    let errorHtml = `<div class="error"><strong>Error:</strong> ${result.error}`;
+                    
+                    if (result.error.includes('SSH key authentication failed') || 
+                        result.error.includes('Permission denied') || 
+                        result.error.includes('Authentication failed')) {
+                        errorHtml += `
+                            <div style="margin-top: 15px; padding: 10px; background: #f0f8ff; border-left: 4px solid #2196F3;">
+                                <h4>SSH Key Setup Required</h4>
+                                <p>To submit jobs to the DAIC cluster, you need to set up SSH key authentication:</p>
+                                <ol style="text-align: left; margin: 10px 0;">
+                                    <li><strong>Generate SSH key pair (if you don't have one):</strong><br>
+                                        <code style="display: block; background: #f5f5f5; padding: 5px; margin: 5px 0;">ssh-keygen -t rsa -b 4096 -C "your.email@tudelft.nl"</code>
+                                    </li>
+                                    <li><strong>Copy your public key to the cluster:</strong><br>
+                                        <code style="display: block; background: #f5f5f5; padding: 5px; margin: 5px 0;">ssh-copy-id letouwen@login3.daic.tudelft.nl</code>
+                                    </li>
+                                    <li><strong>Test the connection:</strong><br>
+                                        <code style="display: block; background: #f5f5f5; padding: 5px; margin: 5px 0;">ssh -o BatchMode=yes daic echo "Connection successful"</code>
+                                    </li>
+                                    <li><strong>Verify your SSH config (~/.ssh/config) includes:</strong><br>
+                                        <pre style="background: #f5f5f5; padding: 5px; margin: 5px 0; text-align: left;">Host daic
+    HostName login3.daic.tudelft.nl
+    User letouwen
+    IdentityFile ~/.ssh/id_rsa</pre>
+                                    </li>
+                                </ol>
+                                <p><em>After setting up SSH keys, try submitting the job again.</em></p>
+                            </div>
+                        `;
+                    }
+                    
+                    errorHtml += '</div>';
+                    statusDiv.innerHTML = errorHtml;
+                }
+            } catch (error) {
+                console.error('Error submitting job:', error);
+                statusDiv.innerHTML = `<div class="error">Failed to submit job: ${error.message}</div>`;
+            } finally {
+                // Re-enable button
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit Job to SLURM';
+            }
         }
 
         // Initialize when page loads
