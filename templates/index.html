@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YAML Config Diff Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background-color: #2d2d30;
+            padding: 10px 20px;
+            border-bottom: 1px solid #3e3e42;
+            z-index: 1000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            color: #569cd6;
+            font-size: 18px;
+        }
+
+        .refresh-btn {
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .refresh-btn:hover {
+            background-color: #1177bb;
+        }
+
+        .content {
+            display: flex;
+            margin-top: 50px;
+            height: calc(100vh - 50px);
+        }
+
+        .tree-panel {
+            width: 50%;
+            background-color: #252526;
+            border-right: 1px solid #3e3e42;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .diff-panel {
+            width: 50%;
+            background-color: #1e1e1e;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .tree-item {
+            margin-left: 0;
+            user-select: none;
+        }
+
+        .tree-node {
+            display: flex;
+            align-items: center;
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 3px;
+            transition: background-color 0.15s;
+        }
+
+        .tree-node:hover {
+            background-color: #2a2d2e;
+        }
+
+        .tree-node.selected {
+            background-color: #094771;
+        }
+
+        .tree-icon {
+            margin-right: 6px;
+            width: 16px;
+            text-align: center;
+            color: #cccccc;
+        }
+
+        .tree-label {
+            flex: 1;
+            color: #cccccc;
+        }
+
+        .tree-children {
+            margin-left: 20px;
+        }
+
+        .file-icon {
+            color: #87ceeb;
+        }
+
+        .folder-icon {
+            color: #dcb67a;
+        }
+
+        .folder-icon.expanded {
+            color: #dcb67a;
+        }
+
+        .diff-header {
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .diff-title {
+            color: #569cd6;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .diff-subtitle {
+            color: #9cdcfe;
+            font-size: 12px;
+        }
+
+        .diff-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #252526;
+            border-radius: 4px;
+            border-left: 3px solid #007acc;
+        }
+
+        .diff-key {
+            color: #4ec9b0;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .diff-values {
+            margin-left: 10px;
+        }
+
+        .diff-value {
+            display: flex;
+            margin-bottom: 4px;
+            padding: 2px 6px;
+            border-radius: 2px;
+        }
+
+        .diff-file {
+            color: #9cdcfe;
+            width: 200px;
+            flex-shrink: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .diff-data {
+            color: #ce9178;
+            margin-left: 10px;
+            word-break: break-all;
+        }
+
+        .diff-value.different {
+            background-color: #4d1f1f;
+        }
+
+        .diff-value.missing {
+            background-color: #2d2d30;
+            opacity: 0.7;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #9cdcfe;
+        }
+
+        .no-differences {
+            color: #6a9955;
+            text-align: center;
+            padding: 40px;
+            font-style: italic;
+        }
+
+        .config-creator {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #252526;
+            border-radius: 4px;
+            border-left: 3px solid #4caf50;
+        }
+
+        .config-creator-header {
+            color: #4caf50;
+            font-weight: bold;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .config-creator-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .config-filename-input {
+            flex: 1;
+            min-width: 200px;
+            padding: 6px 10px;
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 3px;
+            color: #d4d4d4;
+            font-family: inherit;
+            font-size: 12px;
+        }
+
+        .config-create-btn {
+            background-color: #4caf50;
+            color: white;
+            border: none;
+            padding: 6px 15px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .config-create-btn:hover {
+            background-color: #45a049;
+        }
+
+        .config-create-btn:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
+        .diff-value-with-override {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .diff-value-override {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 2px 6px;
+            background-color: #2d2d30;
+            border-radius: 2px;
+        }
+
+        .override-input {
+            flex: 1;
+            padding: 2px 6px;
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 2px;
+            color: #d4d4d4;
+            font-family: inherit;
+            font-size: 11px;
+        }
+
+        .override-label {
+            color: #4caf50;
+            font-size: 11px;
+            min-width: 80px;
+        }
+
+        .create-status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .create-status.success {
+            background-color: #1f4f23;
+            color: #4caf50;
+        }
+
+        .create-status.error {
+            background-color: #4d1f1f;
+            color: #f48771;
+        }
+
+        .error {
+            color: #f48771;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 8px;
+        }
+
+        .status-connected {
+            background-color: #4caf50;
+        }
+
+        .status-disconnected {
+            background-color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>YAML Config Diff Viewer</h1>
+        <div>
+            <button class="refresh-btn" onclick="refreshData()">Refresh</button>
+            <span class="status-indicator status-connected" id="statusIndicator"></span>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="content">
+            <div class="tree-panel">
+                <div id="treeContainer">
+                    <div class="loading">Loading configuration tree...</div>
+                </div>
+            </div>
+
+            <div class="diff-panel">
+                <div id="diffContainer">
+                    <div class="diff-header">
+                        <div class="diff-title">Configuration Differences</div>
+                        <div class="diff-subtitle">Select a file or folder to view differences</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTree = {};
+        let selectedPath = '';
+        let updateInterval;
+
+        // Initialize the application
+        async function init() {
+            await loadTree();
+            startAutoRefresh();
+        }
+
+        // Load the tree structure
+        async function loadTree() {
+            try {
+                const response = await fetch('/api/tree');
+                currentTree = await response.json();
+                renderTree();
+                setStatus(true);
+            } catch (error) {
+                console.error('Error loading tree:', error);
+                setStatus(false);
+                document.getElementById('treeContainer').innerHTML = 
+                    '<div class="error">Error loading configuration tree</div>';
+            }
+        }
+
+        // Render the tree structure
+        function renderTree() {
+            const container = document.getElementById('treeContainer');
+            container.innerHTML = '';
+            
+            if (Object.keys(currentTree).length === 0) {
+                container.innerHTML = '<div class="no-differences">No YAML files found</div>';
+                return;
+            }
+
+            const treeHtml = renderTreeNode(currentTree, '');
+            container.innerHTML = treeHtml;
+            
+            // Add click handlers
+            container.querySelectorAll('.tree-node').forEach(node => {
+                node.addEventListener('click', handleTreeNodeClick);
+            });
+        }
+
+        // Render a single tree node
+        function renderTreeNode(node, path, level = 0) {
+            let html = '';
+            
+            for (const [name, data] of Object.entries(node)) {
+                const currentPath = path ? `${path}/${name}` : name;
+                const isDirectory = data.type === 'directory';
+                const hasChildren = isDirectory && Object.keys(data.children || {}).length > 0;
+                
+                html += `
+                    <div class="tree-item" style="margin-left: ${level * 20}px">
+                        <div class="tree-node" data-path="${currentPath}" data-type="${data.type}">
+                            <span class="tree-icon ${isDirectory ? 'folder-icon' : 'file-icon'}">
+                                ${isDirectory ? (hasChildren ? '📁' : '📂') : '📄'}
+                            </span>
+                            <span class="tree-label">${name}</span>
+                        </div>
+                `;
+                
+                if (isDirectory && hasChildren) {
+                    html += `<div class="tree-children">`;
+                    html += renderTreeNode(data.children, currentPath, level + 1);
+                    html += `</div>`;
+                }
+                
+                html += `</div>`;
+            }
+            
+            return html;
+        }
+
+        // Handle tree node clicks
+        function handleTreeNodeClick(event) {
+            event.stopPropagation();
+            
+            // Remove previous selection
+            document.querySelectorAll('.tree-node.selected').forEach(node => {
+                node.classList.remove('selected');
+            });
+            
+            // Add selection to clicked node
+            event.currentTarget.classList.add('selected');
+            
+            const path = event.currentTarget.dataset.path;
+            const type = event.currentTarget.dataset.type;
+            
+            selectedPath = path;
+            loadDifferences(path, type);
+        }
+
+        // Load differences for a specific path
+        async function loadDifferences(path, type) {
+            try {
+                const response = await fetch(`/api/differences/${encodeURIComponent(path)}`);
+                const differences = await response.json();
+                renderDifferences(differences, path, type);
+                setStatus(true);
+            } catch (error) {
+                console.error('Error loading differences:', error);
+                setStatus(false);
+                document.getElementById('diffContainer').innerHTML = 
+                    '<div class="error">Error loading differences</div>';
+            }
+        }
+
+        // Render the differences panel
+        function renderDifferences(differences, path, type) {
+            const container = document.getElementById('diffContainer');
+            
+            const header = `
+                <div class="diff-header">
+                    <div class="diff-title">${type === 'directory' ? 'Directory' : 'File'}: ${path}</div>
+                    <div class="diff-subtitle">
+                        ${differences.length} difference${differences.length !== 1 ? 's' : ''} found
+                    </div>
+                </div>
+            `;
+            
+            if (differences.length === 0) {
+                container.innerHTML = header + '<div class="no-differences">No differences found</div>';
+                return;
+            }
+            
+            let diffHtml = header;
+            
+            differences.forEach((diff, index) => {
+                diffHtml += `
+                    <div class="diff-item">
+                        <div class="diff-key">${diff.key}</div>
+                        <div class="diff-values">
+                `;
+                
+                // Get the first file's value as default for new config
+                const fileNames = Object.keys(diff.values);
+                const firstValue = fileNames.length > 0 ? diff.values[fileNames[0]] : '';
+                const defaultValue = firstValue === '<missing>' ? '' : String(firstValue);
+                
+                for (const [file, value] of Object.entries(diff.values)) {
+                    const isMissing = value === '<missing>';
+                    const isDifferent = diff.is_different;
+                    const className = isMissing ? 'missing' : (isDifferent ? 'different' : '');
+                    
+                    diffHtml += `
+                        <div class="diff-value ${className}">
+                            <div class="diff-value-with-override">
+                                <div style="display: flex;">
+                                    <div class="diff-file">${file}</div>
+                                    <div class="diff-data">${isMissing ? '(missing)' : JSON.stringify(value)}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                // Add the "new config" override input
+                if (!diff.key.includes('<missing>')) {
+                    diffHtml += `
+                        <div class="diff-value-override">
+                            <div class="override-label">new config:</div>
+                            <input type="text" class="override-input" 
+                                   data-key="${diff.key}" 
+                                   value="${defaultValue.replace(/"/g, '&quot;')}"
+                                   placeholder="Enter value for new config">
+                        </div>
+                    `;
+                }
+                
+                diffHtml += `
+                        </div>
+                    </div>
+                `;
+            });
+            
+            // Add config creator section
+            if (type === 'directory' || type === 'file') {
+                diffHtml += `
+                    <div class="config-creator">
+                        <div class="config-creator-header">Create New Configuration</div>
+                        <div class="config-creator-controls">
+                            <input type="text" class="config-filename-input" 
+                                   id="newConfigFilename" 
+                                   placeholder="Enter filename (e.g., my-config.yaml)">
+                            <button class="config-create-btn" onclick="createNewConfig()">Create Config</button>
+                        </div>
+                        <div id="createStatus" class="create-status" style="display: none;"></div>
+                    </div>
+                `;
+            }
+            
+            container.innerHTML = diffHtml;
+        }
+
+        // Refresh data manually
+        async function refreshData() {
+            await fetch('/api/refresh');
+            await loadTree();
+            if (selectedPath) {
+                const selectedNode = document.querySelector(`[data-path="${selectedPath}"]`);
+                if (selectedNode) {
+                    selectedNode.classList.add('selected');
+                    const type = selectedNode.dataset.type;
+                    await loadDifferences(selectedPath, type);
+                }
+            }
+        }
+
+        // Set connection status indicator
+        function setStatus(connected) {
+            const indicator = document.getElementById('statusIndicator');
+            indicator.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
+        }
+
+        // Create new configuration file
+        async function createNewConfig() {
+            const filenameInput = document.getElementById('newConfigFilename');
+            const statusDiv = document.getElementById('createStatus');
+            const createBtn = document.querySelector('.config-create-btn');
+            
+            const filename = filenameInput.value.trim();
+            if (!filename) {
+                showCreateStatus('Please enter a filename', 'error');
+                return;
+            }
+            
+            // Collect all override values
+            const overrides = {};
+            const overrideInputs = document.querySelectorAll('.override-input');
+            
+            overrideInputs.forEach(input => {
+                const key = input.dataset.key;
+                const value = input.value.trim();
+                if (value) {
+                    overrides[key] = value;
+                }
+            });
+            
+            // Disable button and show loading
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
+            
+            try {
+                const response = await fetch('/api/create-config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        filename: filename,
+                        directory: getCurrentDirectory(),
+                        overrides: overrides
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showCreateStatus(`Successfully created ${result.filename}`, 'success');
+                    filenameInput.value = '';
+                    
+                    // Clear override inputs
+                    overrideInputs.forEach(input => {
+                        const defaultValue = getDefaultValueForKey(input.dataset.key);
+                        input.value = defaultValue;
+                    });
+                    
+                    // Refresh the tree after a short delay
+                    setTimeout(async () => {
+                        await loadTree();
+                    }, 1000);
+                } else {
+                    showCreateStatus(result.error || 'Failed to create config', 'error');
+                }
+            } catch (error) {
+                showCreateStatus('Network error: ' + error.message, 'error');
+            } finally {
+                createBtn.disabled = false;
+                createBtn.textContent = 'Create Config';
+            }
+        }
+
+        // Show create status message
+        function showCreateStatus(message, type) {
+            const statusDiv = document.getElementById('createStatus');
+            statusDiv.textContent = message;
+            statusDiv.className = `create-status ${type}`;
+            statusDiv.style.display = 'block';
+            
+            // Hide after 5 seconds
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        // Get current directory from selected path
+        function getCurrentDirectory() {
+            if (!selectedPath) return '';
+            
+            // If selectedPath is a file, get its directory
+            const selectedNode = document.querySelector(`[data-path="${selectedPath}"]`);
+            if (selectedNode && selectedNode.dataset.type === 'file') {
+                const pathParts = selectedPath.split('/');
+                return pathParts.slice(0, -1).join('/');
+            }
+            
+            // If it's a directory, use it directly
+            return selectedPath;
+        }
+
+        // Get default value for a key (first file's value)
+        function getDefaultValueForKey(key) {
+            const overrideInput = document.querySelector(`[data-key="${key}"]`);
+            if (overrideInput) {
+                // Find the first non-missing value from the diff values
+                const diffItem = overrideInput.closest('.diff-item');
+                const diffValues = diffItem.querySelectorAll('.diff-value:not(.missing) .diff-data');
+                if (diffValues.length > 0) {
+                    const firstValue = diffValues[0].textContent;
+                    // Remove JSON quotes if present
+                    return firstValue.replace(/^"(.*)"$/, '$1');
+                }
+            }
+            return '';
+        }
+
+        // Start auto-refresh timer
+        function startAutoRefresh() {
+            updateInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/tree');
+                    const newTree = await response.json();
+                    
+                    // Only update if tree has changed
+                    if (JSON.stringify(newTree) !== JSON.stringify(currentTree)) {
+                        currentTree = newTree;
+                        renderTree();
+                        
+                        // Refresh differences if a path is selected
+                        if (selectedPath) {
+                            const selectedNode = document.querySelector(`[data-path="${selectedPath}"]`);
+                            if (selectedNode) {
+                                selectedNode.classList.add('selected');
+                                const type = selectedNode.dataset.type;
+                                await loadDifferences(selectedPath, type);
+                            }
+                        }
+                    }
+                    setStatus(true);
+                } catch (error) {
+                    setStatus(false);
+                }
+            }, 2000); // Check every 2 seconds
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
