@@ -904,10 +904,22 @@
 
                 if (response.ok) {
                     if (result.manual_submission) {
+                        // Check if there's an error message to display prominently
+                        let errorSection = '';
+                        if (result.error) {
+                            errorSection = `
+                                <div style="margin-bottom: 15px; padding: 10px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+                                    <strong>⚠️ Automated submission failed:</strong><br>
+                                    <span style="color: #856404;">${result.error}</span>
+                                </div>
+                            `;
+                        }
+                        
                         statusDiv.innerHTML = `
                             <div class="success">
                                 <strong>Sbatch file created successfully!</strong><br>
                                 Status: ${result.status}<br>
+                                ${errorSection}
                                 <div style="margin-top: 15px; padding: 10px; background: #e8f4fd; border-left: 4px solid #2196F3;">
                                     <pre style="white-space: pre-wrap; background: #f5f5f5; padding: 10px; margin: 10px 0; text-align: left;">${result.instructions}</pre>
                                 </div>

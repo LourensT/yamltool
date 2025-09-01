@@ -1,4 +1,5 @@
 configs/
 .vscode/
 .venv/
-creds.txt
+secret.txt
+*.sh

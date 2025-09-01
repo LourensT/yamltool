@@ -9,6 +9,16 @@ Tool to visualize differences between YAML configuration files, create new confi
 3. Run `python app.py`
 4. Open http://localhost:5000 or as specicified in config
 
+# Install
+
+## Dependencies
+
+using python 3.10
+
+```bash
+pip install flask pyyaml watchdog pexpect
+```
+
 ## Configuration
 
 The tool is configured via `config.json`:
@@ -53,6 +63,24 @@ The tool is configured via `config.json`:
 }
 ```
 
+### SSH & Authentication
+```json
+{
+  "ssh": {
+    "connection_timeout": 10,
+    "command_timeout": 30,
+    "requires_password": true,
+    "credentials_file": "secret.txt"           // File containing username and password (one per line)
+  }
+}
+```
+
+**Credentials File Format (`secret.txt`)**:
+```
+username
+password
+```
+
 ### File Watching
 ```json
 {
@@ -90,10 +118,6 @@ Example template:
 #SBATCH --output={output_pattern}
 #SBATCH --error={error_pattern}
 
-## Dependencies
-
-using python 3.10
-
-```bash
-pip install flask pyyaml watchdog
+# Your job commands here
+python your_script.py --config {config_path}
 ```

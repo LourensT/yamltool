@@ -6,7 +6,7 @@
     },
     "paths": {
         "configs_directory": "/home/letouwen/yamltool/configs",
-        "working_directory": "/home/letouwen/yamltool",
+        "working_directory": "/home/letouwen/yamltool/",
         "slurm_template_file": "/home/letouwen/yamltool/run.sh"
     },
     "slurm": {
@@ -34,6 +34,7 @@
         "connection_timeout": 10,
         "command_timeout": 30,
         "requires_password": true,
-        "batch_mode": false
+        "batch_mode": false,
+        "credentials_file": "secret.txt"
     }
 }

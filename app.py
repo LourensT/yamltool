@@ -434,7 +434,8 @@ def submit_slurm_job():
                     'manual_submission': True,
                     'sbatch_file': os.path.basename(job_result.get('sbatch_file', '')),
                     'message': job_result.get('message', 'Sbatch file created for manual submission'),
-                    'instructions': job_result.get('instructions', '')
+                    'instructions': job_result.get('instructions', ''),
+                    'error': job_result.get('error')
                 })
             else:
                 return jsonify({
@@ -521,16 +522,36 @@ srun apptainer exec \\
 def submit_job_via_ssh(sbatch_file_path, job_name):
     """Submit job via SSH to login node."""
     import os
+    import pexpect
+    from pathlib import Path
+    
     try:
-        # Since DAIC requires Kerberos authentication (password-based), 
-        # we cannot use BatchMode. Instead, we'll create the files locally
-        # and provide instructions for manual submission.
-        
-        ssh_host = CONFIG['slurm']['ssh_host']
+        ssh_config = CONFIG['ssh']
+        slurm_config = CONFIG['slurm']
         working_dir = CONFIG['paths']['working_directory']
         
-        print(f"{ssh_host} cluster requires password authentication...")
-        print("Creating sbatch file for manual submission...")
+        # Check if credentials file exists
+        creds_file = Path(working_dir) / ssh_config.get('credentials_file', 'secret.txt')
+        if not creds_file.exists():
+            # Fall back to manual submission if no credentials
+            return manual_submission_fallback(sbatch_file_path, job_name, f"Credentials file not found: {creds_file}. Create this file with username on first line and password on second line for automated submission.")
+        
+        # Read credentials
+        try:
+            with open(creds_file) as f:
+                lines = f.read().strip().splitlines()
+                if len(lines) >= 2:
+                    username, password = lines[0], lines[1]
+                else:
+                    raise ValueError("Invalid credentials file format")
+        except Exception as e:
+            print(f"Error reading credentials: {e}")
+            return manual_submission_fallback(sbatch_file_path, job_name, f"Could not read credentials file: {e}")
+        
+        ssh_host = slurm_config['ssh_host']
+        full_ssh_host = f"login3.daic.tudelft.nl" if ssh_host == "daic" else ssh_host
+        
+        print(f"Attempting automated SSH submission to {full_ssh_host}...")
         
         # Read the sbatch file content
         with open(sbatch_file_path, 'r') as f:
@@ -548,8 +569,95 @@ def submit_job_via_ssh(sbatch_file_path, job_name):
         
         print(f"Created sbatch file: {local_sbatch_path}")
         
-        # Since we can't automate the SSH with password, return instructions
-        instructions = f"""
+        # Submit job via SSH with pexpect
+        usr = slurm_config.get('ssh_user', 'username')
+        rel_path = local_sbatch_path.split(usr)[1][1:]
+        ssh_cmd = f"sbatch {rel_path}"
+        timeout = ssh_config.get('command_timeout', 30)
+        
+        try:
+            child = pexpect.spawn(f"ssh {username}@{full_ssh_host} '{ssh_cmd}'", timeout=timeout)
+            child.expect("password:")
+            child.sendline(password)
+            
+            # Wait for either the command to complete or timeout
+            index = child.expect([pexpect.EOF, pexpect.TIMEOUT])
+            
+            if index == 0:  # EOF - command completed
+                output = child.before.decode().strip()
+                print(f"SSH command output: {output}")
+                child.close()
+                
+                # Parse SLURM output to extract job ID
+                job_id = None
+                for line in output.split('\n'):
+                    if 'Submitted batch job' in line:
+                        try:
+                            job_id = line.split()[-1]
+                        except:
+                            pass
+                
+                if job_id:
+                    print(f"Job submitted successfully with ID: {job_id}")
+                    return {
+                        'job_id': job_id,
+                        'message': f'Job submitted successfully with ID: {job_id}',
+                        'sbatch_file': local_sbatch_path,
+                        'manual_submission': False,
+                        'ssh_output': output
+                    }
+                else:
+                    print(f"Job submission unclear. Output: {output}")
+                    return {
+                        'job_id': None,
+                        'message': f'Job submission status unclear. Output: {output}',
+                        'sbatch_file': local_sbatch_path,
+                        'manual_submission': False,
+                        'ssh_output': output
+                    }
+            else:  # Timeout
+                child.close(force=True)
+                print(f"SSH command timed out after {timeout} seconds")
+                return manual_submission_fallback(sbatch_file_path, job_name, 
+                                                f"SSH command timed out after {timeout} seconds")
+                
+        except pexpect.exceptions.ExceptionPexpect as e:
+            print(f"SSH connection failed: {e}")
+            return manual_submission_fallback(sbatch_file_path, job_name, f"SSH connection failed: {e}")
+        
+    except Exception as e:
+        print(f"Automated submission failed: {e}")
+        return manual_submission_fallback(sbatch_file_path, job_name, f"Automated submission failed: {e}")
+
+def manual_submission_fallback(sbatch_file_path, job_name, error_msg=None):
+    """Fallback to manual submission instructions."""
+    import os
+    
+    ssh_config = CONFIG['ssh']
+    slurm_config = CONFIG['slurm']
+    working_dir = CONFIG['paths']['working_directory']
+    ssh_host = slurm_config['ssh_host']
+    
+    print("Falling back to manual submission...")
+    
+    # Read the sbatch file content
+    with open(sbatch_file_path, 'r') as f:
+        sbatch_content = f.read()
+    
+    # Create a local copy with a proper name
+    local_sbatch_name = f"run_{job_name}.sh"
+    local_sbatch_path = os.path.join(working_dir, local_sbatch_name)
+    
+    with open(local_sbatch_path, 'w') as f:
+        f.write(sbatch_content)
+    
+    # Make it executable
+    os.chmod(local_sbatch_path, 0o755)
+    
+    print(f"Created sbatch file: {local_sbatch_path}")
+    
+    # Create manual instructions (without error section since it's shown separately in UI)
+    instructions = f"""
 MANUAL SUBMISSION REQUIRED:
 
 Copy and paste these commands in your terminal:
@@ -568,17 +676,15 @@ exit
 
 The sbatch file has been created at: {local_sbatch_path}
 """
-        
-        return {
-            'job_id': None,
-            'message': 'Sbatch file created for manual submission',
-            'instructions': instructions,
-            'sbatch_file': local_sbatch_path,
-            'manual_submission': True
-        }
-        
-    except Exception as e:
-        raise Exception(f"Failed to prepare job submission: {str(e)}")
+    
+    return {
+        'job_id': None,
+        'message': 'Sbatch file created for manual submission',
+        'instructions': instructions,
+        'sbatch_file': local_sbatch_path,
+        'manual_submission': True,
+        'error': error_msg
+    }
 
 def setup_file_watcher():
     """Set up file system watcher."""
