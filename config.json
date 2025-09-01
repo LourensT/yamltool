@@ -12,10 +12,7 @@
     "slurm": {
         "default_partition": "general",
         "default_time": "12:00:00",
-        "default_nodes": 1,
-        "default_cpus_per_task": 4,
         "default_mem": "64G",
-        "default_job_name": "yamltool_job",
         "ssh_host": "daic",
         "ssh_user": "letouwen",
         "output_pattern": "slurm-%j.out",
