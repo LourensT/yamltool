@@ -7,7 +7,9 @@ Tool to visualize differences between YAML configuration files, create new confi
 1. Place `app.py`, `templates/index.html`, and `config.json` in your project directory
 2. Edit `config.json` to match your paths and settings
 3. Run `python app.py`
-4. Open http://localhost:5000 or as specicified in config
+4. Open http://localhost:5000 or as specified in config
+      - if it is running on your workstation, do `ssh -L 5000:localhost:5000 user@remote_host` 
+      - if using VPN, use the VS Code Simple Browser!
 
 # Install
 

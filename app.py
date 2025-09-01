@@ -402,12 +402,19 @@ def create_config():
 @app.route('/api/submit-slurm', methods=['POST'])
 def submit_slurm_job():
     """Create sbatch file and submit SLURM job."""
+
+    sbatch_dir = os.path.dirname(CONFIG['paths']['slurm_template_file'])
+    config_dir = CONFIG['paths']['configs_directory']
+    # find relative path from sbatch_dir to config_dir
+    relative_config_path = os.path.relpath(config_dir, sbatch_dir)
+
+
     data = request.get_json()
     job_name = data.get('jobName', '').strip()
     use_gpu = data.get('useGpu', False)
     memory = data.get('memory', '64G')
-    config_path = data.get('configPath', '').strip()
-    
+    config_path = os.path.join(relative_config_path, data.get('configPath', '').strip())
+
     if not job_name:
         return jsonify({'error': 'Job name is required'}), 400
     
