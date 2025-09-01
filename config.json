@@ -5,9 +5,9 @@
         "debug": true
     },
     "paths": {
-        "configs_directory": "/home/letouwen/yamltool/configs",
+        "configs_directory": "/home/letouwen/megagnn_graphgym/configs",
         "working_directory": "/home/letouwen/yamltool/",
-        "slurm_template_file": "/home/letouwen/yamltool/run.sh"
+        "slurm_template_file": "/home/letouwen/megagnn_graphgym/run_federated.sh"
     },
     "slurm": {
         "default_partition": "general",

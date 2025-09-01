@@ -462,62 +462,59 @@ def create_sbatch_content(job_name, use_gpu, memory, config_path):
     # Try to read from template file first
     template_file = Path(CONFIG['paths']['slurm_template_file'])
     if template_file.exists():
-        try:
-            with open(template_file, 'r') as f:
-                template_content = f.read()
-            
-            # Replace placeholders in the template
-            content = template_content.format(
-                job_name=job_name,
-                memory=memory,
-                config_path=config_path,
-                gpu_line="#SBATCH --gres=gpu:1               # Request 1 GPU" if use_gpu else "",
-                partition=slurm_config.get('default_partition', 'general'),
-                time=slurm_config.get('default_time', '12:00:00'),
-                nodes=slurm_config.get('default_nodes', 1),
-                output_pattern=slurm_config.get('output_pattern', 'slurm-%j.out'),
-                error_pattern=slurm_config.get('error_pattern', 'slurm-%j.err')
+        with open(template_file, 'r') as f:
+            content = f.read()
+        
+        # Manually replace specific values in the template
+        # Replace job name
+        import re
+        content = re.sub(r'#SBATCH --job-name=.*', f'#SBATCH --job-name={job_name}', content)
+        
+        # Replace memory
+        content = re.sub(r'#SBATCH --mem=.*', f'#SBATCH --mem={memory}', content)
+        
+        # Handle GPU line - add or remove based on use_gpu flag
+        if use_gpu:
+            # If GPU line doesn't exist, add it after the tasks-per-node line
+            if '#SBATCH --gres=gpu:' not in content:
+                content = re.sub(
+                    r'(#SBATCH --tasks-per-node=.*\n)', 
+                    r'\1#SBATCH --gres=gpu:1               # Request 1 GPU\n', 
+                    content
+                )
+        else:
+            # Remove GPU line if it exists
+            content = re.sub(r'#SBATCH --gres=gpu:.*\n', '', content)
+        
+        # Replace config path at the end of the file
+        # Look for the python command and replace the config path
+        content = re.sub(
+            r'python -m MegaGNN\.main --cfg .*',
+            f'python -m MegaGNN.main --cfg {config_path}',
+            content
+        )
+        
+        # Optional: Replace other SLURM parameters if they exist in config
+        if 'default_partition' in slurm_config:
+            content = re.sub(
+                r'#SBATCH --partition=.*', 
+                f'#SBATCH --partition={slurm_config["default_partition"]}        # Request partition.',
+                content
             )
-            return content
-        except Exception as e:
-            print(f"Warning: Could not read template file {template_file}: {e}")
-            # Fall back to hardcoded template
-    
-    # Fallback hardcoded template
-    gpu_line = "#SBATCH --gres=gpu:1               # Request 1 GPU" if use_gpu else ""
-    
-    return f"""#!/bin/sh
-#SBATCH --job-name={job_name}
-#SBATCH --account=ewi-st-dis
-#SBATCH --qos=medium 
-#SBATCH --partition={slurm_config.get('default_partition', 'general')}        # Request partition.
-#SBATCH --exclude=influ[1-6],insy[15-16],awi[01-02]
-#SBATCH --time={slurm_config.get('default_time', '12:00:00')}            # Request run time (wall-clock). Default is 1 minute
-#SBATCH --nodes={slurm_config.get('default_nodes', 1)}                  # Request 1 node
-#SBATCH --tasks-per-node=1         # Set one task per node
-{gpu_line}
-#SBATCH --mem={memory}
-#SBATCH --mail-type=END            # Set mail type to 'END' to receive a mail when the job finishes. %j is the Slurm jobId
-#SBATCH --output=./output/{slurm_config.get('output_pattern', 'slurm-%j.out')}
-#SBATCH --error=./output/{slurm_config.get('error_pattern', 'slurm-%j.err')}
-
-# Increase file descriptor limit
-ulimit -n 65536
-
-# Assuming you have a dedicated directory for *.sif files
-export APPTAINER_ROOT="/tudelft.net/staff-umbrella/ScalableGraphLearning/apptainer"
-export APPTAINER_NAME="pytorch2.2.2-cuda11.8-ubuntu22.04-Federated.sif"
-
-nvidia-smi
-
-srun apptainer exec \\
-  --nv \\
-  -B /home/nfs/letouwen/megagnn_graphgym:/home/$USER/megagnn_graphgym \\
-  -B /tudelft.net/staff-umbrella/ScalableGraphLearning/lourens/data:/mnt/lourens/data \\
-  -B /tudelft.net/staff-umbrella/ScalableGraphLearning/lourens/exps/:/mnt/lourens/exps/results \\
-  $APPTAINER_ROOT/$APPTAINER_NAME \\
-  python -m MegaGNN.main --cfg {config_path}
-"""
+        
+        if 'default_time' in slurm_config:
+            content = re.sub(
+                r'#SBATCH --time=.*', 
+                f'#SBATCH --time={slurm_config["default_time"]}            # Request run time (wall-clock). Default is 1 minute',
+                content
+            )
+        
+        print(f"Generated sbatch content for job '{job_name}' with config '{config_path}'")
+        print(f"GPU enabled: {use_gpu}, Memory: {memory}")
+        
+        return content
+    else:
+        raise FileNotFoundError(f"Template file not found: {template_file}")
 
 def submit_job_via_ssh(sbatch_file_path, job_name):
     """Submit job via SSH to login node."""
@@ -529,7 +526,8 @@ def submit_job_via_ssh(sbatch_file_path, job_name):
         ssh_config = CONFIG['ssh']
         slurm_config = CONFIG['slurm']
         working_dir = CONFIG['paths']['working_directory']
-        
+        slurm_dir = os.path.dirname(CONFIG['paths']['slurm_template_file'])
+
         # Check if credentials file exists
         creds_file = Path(working_dir) / ssh_config.get('credentials_file', 'secret.txt')
         if not creds_file.exists():
@@ -559,7 +557,7 @@ def submit_job_via_ssh(sbatch_file_path, job_name):
         
         # Create a local copy with a proper name
         local_sbatch_name = f"run_{job_name}.sh"
-        local_sbatch_path = os.path.join(working_dir, local_sbatch_name)
+        local_sbatch_path = os.path.join(slurm_dir, local_sbatch_name)
         
         with open(local_sbatch_path, 'w') as f:
             f.write(sbatch_content)
