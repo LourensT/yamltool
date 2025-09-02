@@ -576,8 +576,9 @@ def submit_job_via_ssh(sbatch_file_path, job_name):
         
         # Submit job via SSH with pexpect
         usr = slurm_config.get('ssh_user', 'username')
-        rel_path = local_sbatch_path.split(usr)[1][1:]
-        ssh_cmd = f"sbatch {rel_path}"
+        rel_path = slurm_dir.split(usr)[1][1:]
+        ssh_cmd = f"cd {rel_path} && sbatch {local_sbatch_name}"
+        print("SHH command", ssh_cmd)
         timeout = ssh_config.get('command_timeout', 30)
         
         try:
