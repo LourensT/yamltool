@@ -1,6 +1,8 @@
 # YAML Config Tool
 
-Tool to visualize differences between YAML configuration files, create new configurations, and submit SLURM jobs.
+Tool to visualize differences between YAML configuration files, create new configurations, and submit SLURM jobs. Speeds up experiment turnover time.
+
+![screenshot](image.png)
 
 # Setup and Run
 
