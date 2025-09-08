@@ -413,6 +413,7 @@ def submit_slurm_job():
     job_name = data.get('jobName', '').strip()
     use_gpu = data.get('useGpu', False)
     memory = data.get('memory', '64G')
+    runtime = data.get('runtime', '12:00:00')
     config_path = os.path.join(relative_config_path, data.get('configPath', '').strip())
 
     if not job_name:
@@ -423,7 +424,7 @@ def submit_slurm_job():
     
     try:
         # Create sbatch file content
-        sbatch_content = create_sbatch_content(job_name, use_gpu, memory, config_path)
+        sbatch_content = create_sbatch_content(job_name, use_gpu, memory, runtime, config_path)
         
         # Create temporary sbatch file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
@@ -462,7 +463,7 @@ def submit_slurm_job():
     except Exception as e:
         return jsonify({'error': f'Failed to submit job: {str(e)}'}), 500
 
-def create_sbatch_content(job_name, use_gpu, memory, config_path):
+def create_sbatch_content(job_name, use_gpu, memory, runtime, config_path):
     """Create sbatch file content based on the template."""
     slurm_config = CONFIG['slurm']
     
@@ -479,6 +480,9 @@ def create_sbatch_content(job_name, use_gpu, memory, config_path):
         
         # Replace memory
         content = re.sub(r'#SBATCH --mem=.*', f'#SBATCH --mem={memory}', content)
+        
+        # Replace runtime/time
+        content = re.sub(r'#SBATCH --time=.*', f'#SBATCH --time={runtime}            # Request run time (wall-clock). Default is 1 minute', content)
         
         # Handle GPU line - add or remove based on use_gpu flag
         if use_gpu:
@@ -509,15 +513,8 @@ def create_sbatch_content(job_name, use_gpu, memory, config_path):
                 content
             )
         
-        if 'default_time' in slurm_config:
-            content = re.sub(
-                r'#SBATCH --time=.*', 
-                f'#SBATCH --time={slurm_config["default_time"]}            # Request run time (wall-clock). Default is 1 minute',
-                content
-            )
-        
         print(f"Generated sbatch content for job '{job_name}' with config '{config_path}'")
-        print(f"GPU enabled: {use_gpu}, Memory: {memory}")
+        print(f"GPU enabled: {use_gpu}, Memory: {memory}, Runtime: {runtime}")
         
         return content
     else:
