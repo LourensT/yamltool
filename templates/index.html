@@ -833,12 +833,15 @@
 
         // Render SLURM configuration form
         function renderSlurmForm(filePath) {
+            // Extract filename without extension from the file path
+            const fileName = filePath.split('/').pop().replace(/\.(yaml|yml|json)$/, '');
+            
             return `
                 <div class="slurm-form">
                     <h3>Submit SLURM Batch Job</h3>
                     <div class="slurm-form-group">
                         <label for="jobName">Job Name:</label>
-                        <input type="text" id="jobName" value="my-job" required>
+                        <input type="text" id="jobName" value="${fileName}" required>
                     </div>
                     <div class="slurm-form-group">
                         <label for="useGpu">Use GPU:</label>

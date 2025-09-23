@@ -720,7 +720,7 @@ if __name__ == '__main__':
     try:
         app_config = CONFIG['app']
         host = app_config.get('host', '0.0.0.0')
-        port = app_config.get('port', 5000)
+        port = app_config.get('port', 5001)
         debug = app_config.get('debug', True)
         
         print("Starting web server...")
