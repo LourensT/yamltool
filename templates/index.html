@@ -72,11 +72,51 @@
             padding: 20px;
         }
 
-        .diff-panel {
+        .right-panels {
             width: 50%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .diff-panel {
+            flex: 1;
             background-color: #1e1e1e;
             overflow-y: auto;
             padding: 20px;
+            min-height: 0;
+        }
+
+        .queue-panel {
+            height: 250px;
+            background-color: #1e1e1e;
+            border-top: 1px solid #3e3e42;
+            overflow-y: auto;
+            padding: 20px;
+            display: none;
+            flex-shrink: 0;
+        }
+
+        .queue-panel.visible {
+            display: block;
+        }
+
+        .queue-header {
+            color: #569cd6;
+            font-size: 16px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #3e3e42;
+            padding-bottom: 5px;
+        }
+
+        .queue-content {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre;
+            color: #cccccc;
+            background-color: #0d1117;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
         }
 
         .tree-item {
@@ -457,11 +497,20 @@
                 </div>
             </div>
 
-            <div class="diff-panel">
-                <div id="diffContainer">
-                    <div class="diff-header">
-                        <div class="diff-title">Configuration Differences</div>
-                        <div class="diff-subtitle">Select a file or folder to view differences</div>
+            <div class="right-panels">
+                <div class="diff-panel">
+                    <div id="diffContainer">
+                        <div class="diff-header">
+                            <div class="diff-title">Configuration Differences</div>
+                            <div class="diff-subtitle">Select a file or folder to view differences</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="queue-panel" id="queuePanel">
+                    <div class="queue-header">Last Queue Status</div>
+                    <div class="queue-content" id="queueContent">
+                        No queue data available
                     </div>
                 </div>
             </div>
@@ -883,6 +932,17 @@
             `;
         }
 
+        // Display queue status in the queue panel
+        function displayQueueStatus(queueStatus) {
+            const queuePanel = document.getElementById('queuePanel');
+            const queueContent = document.getElementById('queueContent');
+            
+            if (queueStatus) {
+                queuePanel.classList.add('visible');
+                queueContent.textContent = queueStatus;
+            }
+        }
+
         // Submit SLURM job
         async function submitSlurmJob() {
             const jobName = document.getElementById('jobName').value.trim();
@@ -943,6 +1003,11 @@
                                 </div>
                             </div>
                         `;
+                        
+                        // Display queue status if available
+                        if (result.queue_status) {
+                            displayQueueStatus(result.queue_status);
+                        }
                     } else {
                         statusDiv.innerHTML = `
                             <div class="success">
@@ -952,6 +1017,11 @@
                                 Status: ${result.status}
                             </div>
                         `;
+                        
+                        // Display queue status if available
+                        if (result.queue_status) {
+                            displayQueueStatus(result.queue_status);
+                        }
                     }
                 } else {
                     // Enhanced error handling for SSH issues

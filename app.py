@@ -437,20 +437,22 @@ def submit_slurm_job():
             
             if job_result.get('manual_submission'):
                 return jsonify({
-                    'status': 'ready_for_manual_submission',
+                    'status': job_result.get('status', 'ready_for_manual_submission'),
                     'jobName': job_name,
                     'manual_submission': True,
-                    'sbatch_file': os.path.basename(job_result.get('sbatch_file', '')),
+                    'sbatch_file': job_result.get('sbatchFile', ''),
                     'message': job_result.get('message', 'Sbatch file created for manual submission'),
                     'instructions': job_result.get('instructions', ''),
-                    'error': job_result.get('error')
+                    'error': job_result.get('error'),
+                    'queue_status': job_result.get('queue_status')
                 })
             else:
                 return jsonify({
-                    'status': 'submitted',
-                    'jobId': job_result.get('job_id'),
-                    'sbatchFile': os.path.basename(sbatch_file_path),
-                    'message': job_result.get('message', 'Job submitted successfully')
+                    'status': job_result.get('status', 'submitted'),
+                    'jobId': job_result.get('jobId'),
+                    'sbatchFile': job_result.get('sbatchFile'),
+                    'message': job_result.get('message', 'Job submitted successfully'),
+                    'queue_status': job_result.get('queue_status')
                 })
             
         finally:
@@ -553,6 +555,36 @@ def create_sbatch_content(job_name, use_gpu, memory, runtime, config_path):
     else:
         raise FileNotFoundError(f"Template file not found: {template_file}")
 
+def get_queue_status(username, password, ssh_host, timeout):
+    """Get current queue status for the user via SSH."""
+    import pexpect
+    
+    try:
+        print(f"Getting queue status from {ssh_host}...")
+        
+        # Execute squeue command
+        squeue_cmd = f'squeue -u "$USER" --format="%.18i %.12P %.30j %.15u %.2t %.12M %.6D %R"'
+        child = pexpect.spawn(f"ssh {username}@{ssh_host} '{squeue_cmd}'", timeout=timeout)
+        child.expect("password:")
+        child.sendline(password)
+        
+        # Wait for command completion
+        index = child.expect([pexpect.EOF, pexpect.TIMEOUT])
+        
+        if index == 0:  # EOF - command completed
+            output = child.before.decode().strip()
+            child.close()
+            print(f"Queue status retrieved successfully")
+            return output
+        else:  # Timeout
+            child.close(force=True)
+            print(f"Queue status command timed out")
+            return "Queue status command timed out"
+            
+    except Exception as e:
+        print(f"Failed to get queue status: {e}")
+        return f"Failed to get queue status: {e}"
+
 def submit_job_via_ssh(sbatch_file_path, job_name):
     """Submit job via SSH to login node."""
     import os
@@ -635,21 +667,33 @@ def submit_job_via_ssh(sbatch_file_path, job_name):
                 
                 if job_id:
                     print(f"Job submitted successfully with ID: {job_id}")
+                    
+                    # Get queue status after successful submission
+                    queue_output = get_queue_status(username, password, full_ssh_host, timeout)
+                    
                     return {
-                        'job_id': job_id,
+                        'jobId': job_id,
                         'message': f'Job submitted successfully with ID: {job_id}',
-                        'sbatch_file': local_sbatch_path,
+                        'sbatchFile': os.path.basename(local_sbatch_path),
+                        'status': 'submitted',
                         'manual_submission': False,
-                        'ssh_output': output
+                        'ssh_output': output,
+                        'queue_status': queue_output
                     }
                 else:
                     print(f"Job submission unclear. Output: {output}")
+                    
+                    # Get queue status even if job ID is unclear
+                    queue_output = get_queue_status(username, password, full_ssh_host, timeout)
+                    
                     return {
-                        'job_id': None,
+                        'jobId': None,
                         'message': f'Job submission status unclear. Output: {output}',
-                        'sbatch_file': local_sbatch_path,
+                        'sbatchFile': os.path.basename(local_sbatch_path),
+                        'status': 'unclear',
                         'manual_submission': False,
-                        'ssh_output': output
+                        'ssh_output': output,
+                        'queue_status': queue_output
                     }
             else:  # Timeout
                 child.close(force=True)
@@ -714,10 +758,11 @@ The sbatch file has been created at: {local_sbatch_path}
 """
     
     return {
-        'job_id': None,
+        'jobId': None,
         'message': 'Sbatch file created for manual submission',
         'instructions': instructions,
-        'sbatch_file': local_sbatch_path,
+        'sbatchFile': os.path.basename(local_sbatch_path),
+        'status': 'ready_for_manual_submission',
         'manual_submission': True,
         'error': error_msg
     }
