@@ -463,9 +463,31 @@ def submit_slurm_job():
     except Exception as e:
         return jsonify({'error': f'Failed to submit job: {str(e)}'}), 500
 
+def parse_runtime_hours(runtime_str):
+    """Parse runtime string (HH:MM:SS) and return total hours as float."""
+    try:
+        time_parts = runtime_str.split(':')
+        if len(time_parts) == 3:
+            hours = int(time_parts[0])
+            minutes = int(time_parts[1])
+            seconds = int(time_parts[2])
+            return hours + minutes / 60.0 + seconds / 3600.0
+        return 0.0
+    except:
+        return 0.0
+
 def create_sbatch_content(job_name, use_gpu, memory, runtime, config_path):
     """Create sbatch file content based on the template."""
     slurm_config = CONFIG['slurm']
+    
+    # Determine QoS based on runtime
+    total_hours = parse_runtime_hours(runtime)
+    if total_hours < 4:
+        qos = "short"
+    elif total_hours <= 36:
+        qos = "medium"
+    else:
+        qos = "long"
     
     # Try to read from template file first
     template_file = Path(CONFIG['paths']['slurm_template_file'])
@@ -483,6 +505,17 @@ def create_sbatch_content(job_name, use_gpu, memory, runtime, config_path):
         
         # Replace runtime/time
         content = re.sub(r'#SBATCH --time=.*', f'#SBATCH --time={runtime}            # Request run time (wall-clock). Default is 1 minute', content)
+        
+        # Replace QoS based on runtime duration
+        if '#SBATCH --qos=' in content:
+            content = re.sub(r'#SBATCH --qos=.*', f'#SBATCH --qos={qos}', content)
+        else:
+            # Add QoS line after the time line if it doesn't exist
+            content = re.sub(
+                r'(#SBATCH --time=.*\n)', 
+                rf'\1#SBATCH --qos={qos}                   # Quality of Service\n', 
+                content
+            )
         
         # Handle GPU line - add or remove based on use_gpu flag
         if use_gpu:
@@ -514,7 +547,7 @@ def create_sbatch_content(job_name, use_gpu, memory, runtime, config_path):
             )
         
         print(f"Generated sbatch content for job '{job_name}' with config '{config_path}'")
-        print(f"GPU enabled: {use_gpu}, Memory: {memory}, Runtime: {runtime}")
+        print(f"GPU enabled: {use_gpu}, Memory: {memory}, Runtime: {runtime}, QoS: {qos}")
         
         return content
     else:
