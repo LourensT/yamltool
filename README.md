@@ -4,6 +4,8 @@ Tool to visualize differences between YAML configuration files, create new confi
 
 ![screenshot](image.png)
 
+*Disclaimer*: This is a personal project that has almost wholly been vibe-coded. I don't condone any of the coding practices used here and mostly use this project to check what the new flavor-of-the-month model can do.
+
 # Setup and Run
 
 One-time setup

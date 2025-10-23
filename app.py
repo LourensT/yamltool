@@ -45,8 +45,9 @@ class DiffInfo:
 class YAMLDiffAnalyzer:
     """Analyzes YAML files to find differences between configurations."""
     
-    def __init__(self, configs_dir: str):
+    def __init__(self, configs_dir: str, ignored_subdirs: Optional[List[str]] = None):
         self.configs_dir = Path(configs_dir)
+        self.ignored_subdirs = set(ignored_subdirs or [])
         self.file_data: Dict[str, Dict] = {}
         self.tree_structure: Dict = {}
         self.differences: Dict[str, DiffInfo] = {}
@@ -58,12 +59,18 @@ class YAMLDiffAnalyzer:
             self.file_data.clear()
             
             for yaml_path in self.configs_dir.rglob("*.yaml"):
+                # Check if the file is in an ignored subdirectory
+                rel_path = yaml_path.relative_to(self.configs_dir)
+                
+                # Check if any part of the path matches ignored subdirectories
+                if any(ignored_dir in rel_path.parts for ignored_dir in self.ignored_subdirs):
+                    continue
+                
                 try:
                     with open(yaml_path, 'r') as f:
                         data = yaml.safe_load(f)
                     
                     # Store relative path as key
-                    rel_path = yaml_path.relative_to(self.configs_dir)
                     self.file_data[str(rel_path)] = data or {}
                     
                 except Exception as e:
@@ -316,7 +323,10 @@ class ConfigFileHandler(FileSystemEventHandler):
             threading.Timer(self.refresh_delay, self.analyzer.refresh).start()
 
 # Global analyzer instance
-analyzer = YAMLDiffAnalyzer(CONFIG['paths']['configs_directory'])
+analyzer = YAMLDiffAnalyzer(
+    CONFIG['paths']['configs_directory'],
+    ignored_subdirs=CONFIG['paths'].get('ignored_subdirectories', [])
+)
 
 @app.route('/')
 def index():
