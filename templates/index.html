@@ -304,6 +304,80 @@
             cursor: not-allowed;
         }
 
+        /* Common values styles */
+        .common-values-section {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #2d2d30;
+            border-radius: 4px;
+            border-left: 3px solid #569cd6;
+        }
+
+        .common-values-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #569cd6;
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .common-values-toggle {
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .common-values-toggle:hover {
+            background-color: #1177bb;
+        }
+
+        .common-values-container {
+            margin-top: 10px;
+        }
+
+        .common-value-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            padding: 8px;
+            background-color: #1e1e1e;
+            border-radius: 3px;
+        }
+
+        .common-value-key {
+            color: #dcdcaa;
+            font-weight: bold;
+            min-width: 150px;
+            font-size: 12px;
+        }
+
+        .common-value-input-container {
+            flex: 1;
+        }
+
+        .common-value-input {
+            width: 100%;
+            padding: 4px 8px;
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 3px;
+            color: #d4d4d4;
+            font-family: inherit;
+            font-size: 11px;
+        }
+
+        .common-value-input:focus {
+            border-color: #569cd6;
+            outline: none;
+        }
+
         .diff-value-with-override {
             display: flex;
             flex-direction: column;
@@ -615,9 +689,14 @@
         // Load differences for a specific path
         async function loadDifferences(path, type) {
             try {
-                const response = await fetch(`/api/differences/${encodeURIComponent(path)}`);
-                const differences = await response.json();
-                renderDifferences(differences, path, type);
+                const [diffResponse, commonResponse] = await Promise.all([
+                    fetch(`/api/differences/${encodeURIComponent(path)}`),
+                    fetch(`/api/common-values/${encodeURIComponent(path)}`)
+                ]);
+                
+                const differences = await diffResponse.json();
+                const commonValues = await commonResponse.json();
+                renderDifferences(differences, commonValues, path, type);
                 setStatus(true);
             } catch (error) {
                 console.error('Error loading differences:', error);
@@ -628,14 +707,16 @@
         }
 
         // Render the differences panel
-        function renderDifferences(differences, path, type) {
+        function renderDifferences(differences, commonValues, path, type) {
             const container = document.getElementById('diffContainer');
             
+            const commonCount = Object.keys(commonValues).length;
             const header = `
                 <div class="diff-header">
                     <div class="diff-title">${type === 'directory' ? 'Directory' : 'File'}: ${path}</div>
                     <div class="diff-subtitle">
                         ${differences.length} difference${differences.length !== 1 ? 's' : ''} found
+                        ${commonCount > 0 ? `, ${commonCount} common value${commonCount !== 1 ? 's' : ''}` : ''}
                     </div>
                 </div>
             `;
@@ -702,7 +783,46 @@
             
             // Add config creator section
             if (type === 'directory' || type === 'file') {
+                // Add common values dropdown if there are any
+                let commonValuesHtml = '';
+                const commonCount = Object.keys(commonValues).length;
+                
+                if (commonCount > 0) {
+                    commonValuesHtml = `
+                        <div class="common-values-section">
+                            <div class="common-values-header">
+                                Common Configuration Values (${commonCount})
+                                <button class="common-values-toggle" onclick="toggleCommonValues()">
+                                    <span id="commonValuesToggleText">Show</span>
+                                </button>
+                            </div>
+                            <div id="commonValuesContainer" class="common-values-container" style="display: none;">
+                    `;
+                    
+                    for (const [key, value] of Object.entries(commonValues)) {
+                        const valueStr = String(value);
+                        commonValuesHtml += `
+                            <div class="common-value-item">
+                                <div class="common-value-key">${key}:</div>
+                                <div class="common-value-input-container">
+                                    <input type="text" class="common-value-input" 
+                                           data-key="${key}" 
+                                           data-original-value="${valueStr.replace(/"/g, '&quot;')}"
+                                           value="${valueStr.replace(/"/g, '&quot;')}"
+                                           placeholder="Enter value">
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    commonValuesHtml += `
+                            </div>
+                        </div>
+                    `;
+                }
+                
                 diffHtml += `
+                    ${commonValuesHtml}
                     <div class="config-creator">
                         <div class="config-creator-header">Create New Configuration</div>
                         <div class="config-creator-controls">
@@ -751,7 +871,7 @@
                 return;
             }
             
-            // Collect all override values
+            // Collect all override values (differences)
             const overrides = {};
             const overrideInputs = document.querySelectorAll('.override-input');
             
@@ -760,6 +880,23 @@
                 const value = input.value.trim();
                 if (value) {
                     overrides[key] = value;
+                }
+            });
+            
+            // Collect common values (only if user actually modified them)
+            const commonValueInputs = document.querySelectorAll('.common-value-input');
+            
+            commonValueInputs.forEach(input => {
+                const key = input.dataset.key;
+                const currentValue = input.value.trim();
+                const originalValue = input.dataset.originalValue || '';
+                
+                // Only include if the value was actually changed by the user
+                if (currentValue && currentValue !== originalValue) {
+                    console.log(`Common value changed for ${key}: "${originalValue}" -> "${currentValue}"`);
+                    overrides[key] = currentValue;
+                } else {
+                    console.log(`Common value unchanged for ${key}: "${originalValue}"`);
                 }
             });
             
@@ -790,6 +927,12 @@
                     overrideInputs.forEach(input => {
                         const defaultValue = getDefaultValueForKey(input.dataset.key);
                         input.value = defaultValue;
+                    });
+                    
+                    // Reset common value inputs to their original values
+                    commonValueInputs.forEach(input => {
+                        // Keep original value - don't clear common values
+                        // Users might want to create multiple configs with the same common values
                     });
                     
                     // Refresh the tree after a short delay
@@ -849,6 +992,20 @@
                 }
             }
             return '';
+        }
+
+        // Toggle common values visibility
+        function toggleCommonValues() {
+            const container = document.getElementById('commonValuesContainer');
+            const toggleText = document.getElementById('commonValuesToggleText');
+            
+            if (container.style.display === 'none') {
+                container.style.display = 'block';
+                toggleText.textContent = 'Hide';
+            } else {
+                container.style.display = 'none';
+                toggleText.textContent = 'Show';
+            }
         }
 
         // Start auto-refresh timer

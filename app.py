@@ -199,6 +199,51 @@ class YAMLDiffAnalyzer:
             
             return matching_diffs
     
+    def get_common_values_for_directory(self, directory: str) -> Dict[str, Any]:
+        """Get configuration values that are the same across all files in a directory."""
+        with self.lock:
+            # Find files in the specified directory
+            target_files = []
+            for file_path in self.file_data.keys():
+                path_parts = Path(file_path).parts
+                file_dir = str(Path(*path_parts[:-1])) if len(path_parts) > 1 else ''
+                
+                if file_dir == directory:
+                    target_files.append(file_path)
+            
+            if len(target_files) <= 1:
+                return {}
+            
+            # Get all flattened configs for this directory
+            flat_configs = {}
+            for file_path in target_files:
+                if file_path in self.file_data:
+                    flat_configs[file_path] = self._flatten_dict(self.file_data[file_path])
+            
+            # Find all possible keys across all files
+            all_keys = set()
+            for config in flat_configs.values():
+                all_keys.update(config.keys())
+            
+            # Find keys that have the same value across all files
+            common_values = {}
+            for key in all_keys:
+                values = {}
+                for file_path in target_files:
+                    if file_path in flat_configs:
+                        values[file_path] = flat_configs[file_path].get(key, "<missing>")
+                
+                # Check if all values are the same (excluding missing values)
+                non_missing_values = [v for v in values.values() if v != "<missing>"]
+                if len(non_missing_values) > 0:
+                    unique_values = set(str(v) for v in non_missing_values)
+                    # Only consider it common if all files have the same value and no files are missing this key
+                    if len(unique_values) == 1 and len(non_missing_values) == len(target_files):
+                        # Store the original value for display purposes
+                        common_values[key] = non_missing_values[0]
+            
+            return common_values
+    
     def refresh(self) -> None:
         """Refresh all data."""
         self.load_yaml_files()
@@ -226,72 +271,140 @@ class YAMLDiffAnalyzer:
             
             return self.file_data.get(first_file, {})
     
+    def _get_original_flat_value(self, base_config: Dict, flat_key: str) -> Any:
+        """Get the original value from the base config for a given flat key."""
+        # Strip directory prefix from the key if present
+        if '/' in flat_key:
+            key_parts = flat_key.split('/')
+            config_key_start = -1
+            for i, part in enumerate(key_parts):
+                if '.' in part:
+                    config_key_start = i
+                    break
+            if config_key_start >= 0:
+                clean_key = '.'.join(key_parts[config_key_start:])
+            else:
+                clean_key = key_parts[-1]
+        else:
+            clean_key = flat_key
+        
+        # Navigate through the nested structure
+        keys = clean_key.split('.')
+        current = base_config
+        
+        try:
+            for key in keys:
+                current = current[key]
+            return current
+        except (KeyError, TypeError):
+            return None
+
     def _apply_overrides_to_config(self, base_config: Dict, overrides: Dict[str, Any]) -> Dict:
         """Apply flat overrides to a nested config, maintaining structure."""
         import copy
+        import json
         
         # Deep copy the base config
         new_config = copy.deepcopy(base_config)
         
-        # Apply each override
+        # Get flattened base config for comparison
+        flat_base = self._flatten_dict(base_config)
+        
+        # Apply each override only if it's actually different from the original value
         for flat_key, value in overrides.items():
             if value is None or value == "":
                 continue
             
-            # Strip directory prefix from the key if present
-            # Keys might come in as "directory/actual.config.key"
-            if '/' in flat_key:
-                # Find the last '/' that separates directory from config key
-                key_parts = flat_key.split('/')
-                # Take everything after the directory part
-                clean_key = key_parts[-1] if len(key_parts) > 1 else flat_key
-                # If there are multiple slashes, we need to handle nested directory structures
-                # Look for the pattern where we have a dot after a slash (config.key pattern)
-                config_key_start = -1
-                for i, part in enumerate(key_parts):
-                    if '.' in part:
-                        config_key_start = i
-                        break
-                if config_key_start >= 0:
-                    clean_key = '.'.join(key_parts[config_key_start:])
-                else:
-                    clean_key = key_parts[-1]
-            else:
-                clean_key = flat_key
-                
-            # Convert clean key to nested path
-            keys = clean_key.split('.')
-            current = new_config
-            
-            # Navigate to the parent of the target key
-            for key in keys[:-1]:
-                if key not in current:
-                    current[key] = {}
-                current = current[key]
-            
-            # Set the final value, converting string representations back to proper types
-            final_key = keys[-1]
-            try:
-                # Try to parse as JSON for proper type conversion
-                if isinstance(value, str):
-                    if value.lower() == 'true':
-                        current[final_key] = True
-                    elif value.lower() == 'false':
-                        current[final_key] = False
-                    elif value.lower() == 'null':
-                        current[final_key] = None
+            # Get the original value from the flattened base config for exact comparison
+            original_flat_value = flat_base.get(flat_key)
+            if original_flat_value is None:
+                # Try with directory prefix stripped
+                clean_flat_key = flat_key
+                if '/' in flat_key:
+                    key_parts = flat_key.split('/')
+                    config_key_start = -1
+                    for i, part in enumerate(key_parts):
+                        if '.' in part:
+                            config_key_start = i
+                            break
+                    if config_key_start >= 0:
+                        clean_flat_key = '.'.join(key_parts[config_key_start:])
                     else:
-                        try:
-                            # Try to parse as number or JSON
-                            import json
-                            current[final_key] = json.loads(value)
-                        except:
-                            # Keep as string
-                            current[final_key] = value
-                else:
-                    current[final_key] = value
-            except:
-                current[final_key] = value
+                        clean_flat_key = key_parts[-1]
+                
+                original_flat_value = flat_base.get(clean_flat_key)
+            
+            # Convert the user input to match the original type for comparison
+            converted_value = value
+            if isinstance(value, str) and original_flat_value is not None:
+                try:
+                    if isinstance(original_flat_value, bool):
+                        converted_value = value.lower() == 'true'
+                    elif isinstance(original_flat_value, (int, float)):
+                        converted_value = type(original_flat_value)(value)
+                    elif isinstance(original_flat_value, list):
+                        # Try to parse as JSON list, but be careful about string representation
+                        if value.startswith('[') and value.endswith(']'):
+                            converted_value = json.loads(value)
+                        else:
+                            # If it doesn't look like JSON, keep as string (user might want to set it to a string)
+                            converted_value = value
+                    elif isinstance(original_flat_value, dict):
+                        if value.startswith('{') and value.endswith('}'):
+                            converted_value = json.loads(value)
+                        else:
+                            # Keep as string if not valid JSON
+                            converted_value = value
+                    else:
+                        # For other types, try direct conversion
+                        converted_value = value
+                except Exception:
+                    # If conversion fails, keep as string
+                    converted_value = value
+            
+            # Compare with original value
+            values_differ = False
+            if original_flat_value is None:
+                values_differ = True  # New key
+            elif isinstance(original_flat_value, (list, dict)):
+                # For complex types, compare as JSON strings
+                try:
+                    values_differ = json.dumps(original_flat_value, sort_keys=True) != json.dumps(converted_value, sort_keys=True)
+                except:
+                    values_differ = str(original_flat_value) != str(converted_value)
+            else:
+                # For simple types, direct comparison
+                values_differ = original_flat_value != converted_value
+            
+            # Only apply override if the value is actually different
+            if values_differ:
+                # Strip directory prefix from the key if present
+                clean_key = flat_key
+                if '/' in flat_key:
+                    key_parts = flat_key.split('/')
+                    config_key_start = -1
+                    for i, part in enumerate(key_parts):
+                        if '.' in part:
+                            config_key_start = i
+                            break
+                    if config_key_start >= 0:
+                        clean_key = '.'.join(key_parts[config_key_start:])
+                    else:
+                        clean_key = key_parts[-1]
+                    
+                # Convert clean key to nested path
+                keys = clean_key.split('.')
+                current = new_config
+                
+                # Navigate to the parent of the target key
+                for key in keys[:-1]:
+                    if key not in current:
+                        current[key] = {}
+                    current = current[key]
+                
+                # Set the final value
+                final_key = keys[-1]
+                current[final_key] = converted_value
         
         return new_config
 
@@ -345,6 +458,13 @@ def get_differences(config_path=''):
     """Get differences for a specific path."""
     differences = analyzer.get_differences_for_path(config_path)
     return jsonify(differences)
+
+@app.route('/api/common-values')
+@app.route('/api/common-values/<path:directory_path>')
+def get_common_values(directory_path=''):
+    """Get common values for a specific directory."""
+    common_values = analyzer.get_common_values_for_directory(directory_path)
+    return jsonify(common_values)
 
 @app.route('/api/refresh')
 def refresh():
