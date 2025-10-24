@@ -407,6 +407,49 @@
             border-left: 3px solid #4caf50;
         }
 
+        /* Multiple seeds controls */
+        .multiple-seeds-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 10px;
+        }
+
+        .seed-count-select {
+            padding: 6px 8px;
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 3px;
+            color: #d4d4d4;
+            font-family: inherit;
+            font-size: 12px;
+        }
+
+        .seed-count-select:focus {
+            border-color: #569cd6;
+            outline: none;
+        }
+
+        .config-create-seeds-btn {
+            background-color: #ff9800;
+            color: white;
+            border: none;
+            padding: 6px 15px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .config-create-seeds-btn:hover {
+            background-color: #f57c00;
+        }
+
+        .config-create-seeds-btn:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
         .diff-value-with-override {
             display: flex;
             flex-direction: column;
@@ -866,6 +909,16 @@
                                    id="newConfigFilename" 
                                    placeholder="Enter filename (e.g., my-config.yaml)">
                             <button class="config-create-btn" onclick="createNewConfig()">Create Config</button>
+                            <div id="multipleSeedsControls" class="multiple-seeds-controls" style="display: none;">
+                                <select id="seedCount" class="seed-count-select">
+                                    <option value="3">3 seeds</option>
+                                    <option value="5" selected>5 seeds</option>
+                                    <option value="10">10 seeds</option>
+                                    <option value="15">15 seeds</option>
+                                    <option value="20">20 seeds</option>
+                                </select>
+                                <button class="config-create-seeds-btn" onclick="createMultipleSeedConfigs()">with multiple seeds</button>
+                            </div>
                         </div>
                         <div id="createStatus" class="create-status" style="display: none;"></div>
                     </div>
@@ -873,6 +926,9 @@
             }
             
             container.innerHTML = diffHtml;
+            
+            // Check if seed configuration exists and show/hide multiple seeds controls
+            checkAndToggleMultipleSeedsControls(differences, commonValues);
         }
 
         // Refresh data manually
@@ -893,6 +949,114 @@
         function setStatus(connected) {
             const indicator = document.getElementById('statusIndicator');
             indicator.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
+        }
+
+        // Create multiple configuration files with different seeds
+        async function createMultipleSeedConfigs() {
+            const filenameInput = document.getElementById('newConfigFilename');
+            const seedCountSelect = document.getElementById('seedCount');
+            const statusDiv = document.getElementById('createStatus');
+            const createBtn = document.querySelector('.config-create-seeds-btn');
+            
+            const baseFilename = filenameInput.value.trim();
+            const seedCount = parseInt(seedCountSelect.value);
+            
+            if (!baseFilename) {
+                showCreateStatus('Please enter a base filename', 'error');
+                return;
+            }
+            
+            // Remove .yaml extension if present to add seed suffix
+            const cleanFilename = baseFilename.replace(/\.yaml$/, '');
+            
+            // Collect all override values
+            const overrides = collectAllOverrides();
+            
+            // Disable button and show loading
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
+            
+            try {
+                const response = await fetch('/api/create-multiple-seed-configs', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        baseFilename: cleanFilename,
+                        directory: getCurrentDirectory(),
+                        overrides: overrides,
+                        seedCount: seedCount
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showCreateStatus(`Successfully created ${result.createdCount} configs with seeds: ${result.seeds.join(', ')}`, 'success');
+                    filenameInput.value = '';
+                    
+                    // Clear override inputs
+                    clearAllInputs();
+                    
+                    // Refresh the tree after a short delay
+                    setTimeout(async () => {
+                        await loadTree();
+                    }, 1000);
+                } else {
+                    showCreateStatus(result.error || 'Failed to create configs', 'error');
+                }
+            } catch (error) {
+                showCreateStatus('Network error: ' + error.message, 'error');
+            } finally {
+                createBtn.disabled = false;
+                createBtn.textContent = 'with multiple seeds';
+            }
+        }
+
+        // Helper function to collect all overrides (both differences and common values)
+        function collectAllOverrides() {
+            const overrides = {};
+            
+            // Collect all override values (differences)
+            const overrideInputs = document.querySelectorAll('.override-input');
+            overrideInputs.forEach(input => {
+                const key = input.dataset.key;
+                const value = input.value.trim();
+                if (value) {
+                    overrides[key] = value;
+                }
+            });
+            
+            // Collect common values (only if user modified them)
+            const commonValueInputs = document.querySelectorAll('.common-value-input');
+            commonValueInputs.forEach(input => {
+                const key = input.dataset.key;
+                const currentValue = input.value.trim();
+                const originalValue = input.dataset.originalValue || '';
+                
+                // Only include if the value was actually changed by the user
+                if (currentValue && currentValue !== originalValue) {
+                    overrides[key] = currentValue;
+                }
+            });
+            
+            return overrides;
+        }
+
+        // Helper function to clear all input fields
+        function clearAllInputs() {
+            const overrideInputs = document.querySelectorAll('.override-input');
+            overrideInputs.forEach(input => {
+                const defaultValue = getDefaultValueForKey(input.dataset.key);
+                input.value = defaultValue;
+            });
+            
+            // Reset common value inputs to their original values
+            const commonValueInputs = document.querySelectorAll('.common-value-input');
+            commonValueInputs.forEach(input => {
+                // Keep original value - don't clear common values
+            });
         }
 
         // Create new configuration file
@@ -1164,6 +1328,58 @@
                 statusText.textContent = `Using ${filename} as template`;
                 statusDiv.style.display = 'block';
             }
+        }
+
+        // Check if seed configuration exists and toggle multiple seeds controls
+        function checkAndToggleMultipleSeedsControls(differences, commonValues) {
+            const multipleSeedsControls = document.getElementById('multipleSeedsControls');
+            if (!multipleSeedsControls) return;
+            
+            let hasSeed = false;
+            
+            // Check in differences
+            for (const diff of differences) {
+                const configKey = extractConfigKey(diff.key);
+                if (configKey === 'seed') {
+                    hasSeed = true;
+                    break;
+                }
+            }
+            
+            // Check in common values if not found in differences
+            if (!hasSeed) {
+                for (const key of Object.keys(commonValues)) {
+                    const configKey = extractConfigKey(key);
+                    if (configKey === 'seed') {
+                        hasSeed = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Show or hide the multiple seeds controls
+            multipleSeedsControls.style.display = hasSeed ? 'flex' : 'none';
+        }
+
+        // Extract the config key from a full key (same logic as in populateInputsFromTemplate)
+        function extractConfigKey(fullKey) {
+            let configKey = fullKey;
+            
+            if (fullKey.includes('/')) {
+                const parts = fullKey.split('/');
+                configKey = parts[parts.length - 1];
+                
+                if (!configKey.includes('.')) {
+                    for (let i = parts.length - 1; i >= 0; i--) {
+                        if (parts[i].includes('.')) {
+                            configKey = parts[i];
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            return configKey;
         }
 
         // Helper function to flatten nested objects (similar to backend)

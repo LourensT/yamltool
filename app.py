@@ -408,6 +408,87 @@ class YAMLDiffAnalyzer:
         
         return new_config
 
+    def _get_existing_configs_in_directory(self, directory: str) -> List[str]:
+        """Get all existing config files in a directory."""
+        with self.lock:
+            existing_files = []
+            for file_path in self.file_data.keys():
+                path_parts = Path(file_path).parts
+                file_dir = str(Path(*path_parts[:-1])) if len(path_parts) > 1 else ''
+                
+                if file_dir == directory:
+                    existing_files.append(file_path)
+            
+            return existing_files
+
+    def _find_seed_key_in_directory(self, directory: str) -> Optional[str]:
+        """Find the seed key format used in a directory."""
+        with self.lock:
+            # Look for seed in differences first
+            file_groups = self._group_files_by_directory()
+            if directory in file_groups:
+                group_diffs = self._find_differences_in_group(file_groups[directory])
+                
+                for key, diff_info in group_diffs.items():
+                    if key.endswith('seed') or key.split('.')[-1] == 'seed':
+                        return key
+            
+            # Look for seed in common values
+            common_values = self.get_common_values_for_directory(directory)
+            for key in common_values.keys():
+                if key.endswith('seed') or key.split('.')[-1] == 'seed':
+                    return key
+            
+            # If not found, assume it's just "seed"
+            return 'seed'
+
+    def _get_used_seeds_for_config_pattern(self, directory: str, overrides: Dict[str, Any]) -> Set[int]:
+        """Get all seeds already used for configs with the same override pattern."""
+        with self.lock:
+            used_seeds = set()
+            
+            # Get all files in the directory
+            target_files = []
+            for file_path in self.file_data.keys():
+                path_parts = Path(file_path).parts
+                file_dir = str(Path(*path_parts[:-1])) if len(path_parts) > 1 else ''
+                
+                if file_dir == directory:
+                    target_files.append(file_path)
+            
+            # Check each existing config
+            for file_path in target_files:
+                config = self.file_data.get(file_path, {})
+                flat_config = self._flatten_dict(config)
+                
+                # Check if this config matches the override pattern (excluding seed)
+                matches_pattern = True
+                for key, value in overrides.items():
+                    # Skip seed comparison
+                    config_key = key
+                    if '/' in key:
+                        parts = key.split('/')
+                        config_key = parts[-1] if not parts[-1].count('.') else parts[-1]
+                    
+                    if config_key == 'seed':
+                        continue
+                    
+                    if config_key in flat_config:
+                        if str(flat_config[config_key]) != str(value):
+                            matches_pattern = False
+                            break
+                
+                # If it matches the pattern, extract the seed
+                if matches_pattern:
+                    seed_value = flat_config.get('seed')
+                    if seed_value is not None:
+                        try:
+                            used_seeds.add(int(seed_value))
+                        except (ValueError, TypeError):
+                            pass
+            
+            return used_seeds
+
 class ConfigFileHandler(FileSystemEventHandler):
     """Handle file system events for YAML config files."""
     
@@ -477,6 +558,99 @@ def get_config_file(file_path):
                 return jsonify({'error': 'File not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/create-multiple-seed-configs', methods=['POST'])
+def create_multiple_seed_configs():
+    """Create multiple configuration files with different random seeds."""
+    from flask import request
+    import json
+    import random
+    
+    data = request.get_json()
+    base_filename = data.get('baseFilename', '').strip()
+    directory = data.get('directory', '').strip()
+    selected_overrides = data.get('overrides', {})
+    seed_count = data.get('seedCount', 5)
+    
+    if not base_filename:
+        return jsonify({'error': 'Base filename is required'}), 400
+    
+    # Determine the target directory
+    if directory:
+        target_dir = analyzer.configs_dir / directory
+    else:
+        target_dir = analyzer.configs_dir
+    
+    try:
+        # Get the first file in the directory as base template
+        base_config = analyzer._get_base_config_for_directory(directory)
+        if not base_config:
+            return jsonify({'error': 'No base configuration found for directory'}), 400
+        
+        # Get existing configs in the directory to check for seed conflicts
+        existing_configs = analyzer._get_existing_configs_in_directory(directory)
+        
+        # Generate unique seeds
+        generated_seeds = []
+        used_seeds = analyzer._get_used_seeds_for_config_pattern(directory, selected_overrides)
+        
+        attempts = 0
+        max_attempts = 1000
+        
+        while len(generated_seeds) < seed_count and attempts < max_attempts:
+            seed = random.randint(0, 1000)
+            attempts += 1
+            
+            if seed not in used_seeds and seed not in generated_seeds:
+                generated_seeds.append(seed)
+        
+        if len(generated_seeds) < seed_count:
+            return jsonify({'error': f'Could only generate {len(generated_seeds)} unique seeds out of {seed_count} requested'}), 400
+        
+        # Create configs with different seeds
+        created_files = []
+        
+        for seed in generated_seeds:
+            # Add the seed to overrides
+            seed_overrides = selected_overrides.copy()
+            
+            # Find the seed key format (could be "seed", "directory/seed", etc.)
+            seed_key = analyzer._find_seed_key_in_directory(directory)
+            if seed_key:
+                seed_overrides[seed_key] = str(seed)
+            
+            # Apply overrides to base config
+            new_config = analyzer._apply_overrides_to_config(base_config, seed_overrides)
+            
+            # Create filename with seed suffix
+            filename = f"{base_filename}-seed{seed}.yaml"
+            target_path = target_dir / filename
+            
+            # Check if file already exists
+            if target_path.exists():
+                continue  # Skip this seed
+            
+            # Ensure target directory exists
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Write the new configuration
+            with open(target_path, 'w') as f:
+                yaml.dump(new_config, f, default_flow_style=False, indent=2)
+            
+            created_files.append(filename)
+        
+        # Refresh the analyzer
+        analyzer.refresh()
+        
+        return jsonify({
+            'status': 'created',
+            'createdCount': len(created_files),
+            'seeds': generated_seeds,
+            'files': created_files
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to create configs: {str(e)}'}), 500
 
 @app.route('/api/refresh')
 def refresh():
