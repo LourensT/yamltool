@@ -466,6 +466,18 @@ def get_common_values(directory_path=''):
     common_values = analyzer.get_common_values_for_directory(directory_path)
     return jsonify(common_values)
 
+@app.route('/api/config/<path:file_path>')
+def get_config_file(file_path):
+    """Get the complete configuration of a specific file."""
+    try:
+        with analyzer.lock:
+            if file_path in analyzer.file_data:
+                return jsonify(analyzer.file_data[file_path])
+            else:
+                return jsonify({'error': 'File not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/refresh')
 def refresh():
     """Manually refresh the data."""

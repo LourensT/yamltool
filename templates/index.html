@@ -378,6 +378,35 @@
             outline: none;
         }
 
+        /* Template selection styles */
+        .diff-value.clickable {
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .diff-value.clickable:hover {
+            background-color: #3e3e42;
+        }
+
+        .diff-value.selected-template {
+            background-color: #264f78;
+            border-left: 3px solid #4caf50;
+        }
+
+        .diff-value.clickable:hover:not(.selected-template) {
+            background-color: #2d2d30;
+        }
+
+        .template-status {
+            background-color: #264f78;
+            color: #4caf50;
+            padding: 8px 12px;
+            margin-bottom: 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            border-left: 3px solid #4caf50;
+        }
+
         .diff-value-with-override {
             display: flex;
             flex-direction: column;
@@ -710,6 +739,9 @@
         function renderDifferences(differences, commonValues, path, type) {
             const container = document.getElementById('diffContainer');
             
+            // Reset template selection when switching directories
+            selectedTemplate = null;
+            
             const commonCount = Object.keys(commonValues).length;
             const header = `
                 <div class="diff-header">
@@ -751,7 +783,8 @@
                     const className = isMissing ? 'missing' : (isDifferent ? 'different' : '');
                     
                     diffHtml += `
-                        <div class="diff-value ${className}">
+                        <div class="diff-value ${className} ${!isMissing ? 'clickable' : ''}" 
+                             ${!isMissing ? `onclick="selectConfigAsTemplate('${file}')" title="Click to use ${file} as template"` : ''}>
                             <div class="diff-value-with-override">
                                 <div style="display: flex;">
                                     <div class="diff-file">${file}</div>
@@ -825,6 +858,9 @@
                     ${commonValuesHtml}
                     <div class="config-creator">
                         <div class="config-creator-header">Create New Configuration</div>
+                        <div id="templateStatus" class="template-status" style="display: none;">
+                            <span id="templateStatusText"></span>
+                        </div>
                         <div class="config-creator-controls">
                             <input type="text" class="config-filename-input" 
                                    id="newConfigFilename" 
@@ -1006,6 +1042,149 @@
                 container.style.display = 'none';
                 toggleText.textContent = 'Show';
             }
+        }
+
+        // Global variable to store current template selection
+        let selectedTemplate = null;
+
+        // Select a config as template for new config creation
+        async function selectConfigAsTemplate(filename) {
+            try {
+                // Remove previous selection styling
+                document.querySelectorAll('.diff-value.selected-template').forEach(el => {
+                    el.classList.remove('selected-template');
+                });
+                
+                // Add selection styling to clicked element
+                const clickedElements = document.querySelectorAll(`.diff-value.clickable`);
+                clickedElements.forEach(el => {
+                    const fileElement = el.querySelector('.diff-file');
+                    if (fileElement && fileElement.textContent === filename) {
+                        el.classList.add('selected-template');
+                    }
+                });
+                
+                // Get the full path of the selected file
+                const directory = getCurrentDirectory();
+                const fullPath = directory ? `${directory}/${filename}` : filename;
+                
+                // Fetch the complete config for this file
+                const response = await fetch(`/api/config/${encodeURIComponent(fullPath)}`);
+                const config = await response.json();
+                
+                if (response.ok) {
+                    selectedTemplate = { filename, config };
+                    populateInputsFromTemplate(config);
+                    showTemplateStatus(filename);
+                } else {
+                    console.error('Failed to load config:', config.error);
+                }
+                
+            } catch (error) {
+                console.error('Error selecting template:', error);
+            }
+        }
+
+        // Populate all input fields with values from the selected template
+        function populateInputsFromTemplate(config) {
+            // Flatten the config to match the key structure used in inputs
+            const flatConfig = flattenObject(config);
+            
+            // Update override inputs (difference values)
+            const overrideInputs = document.querySelectorAll('.override-input');
+            
+            overrideInputs.forEach(input => {
+                const fullKey = input.dataset.key;
+                
+                // Extract the config key part from the full key
+                // Full key format: "directory/path/config.key" -> we want "config.key"
+                let configKey = fullKey;
+                
+                // If the key contains directory path, extract just the config part
+                if (fullKey.includes('/')) {
+                    // Split by '/' and take the last part that looks like a config key
+                    const parts = fullKey.split('/');
+                    // The config key should be the last part or the part with dots
+                    configKey = parts[parts.length - 1];
+                    
+                    // If the last part doesn't have dots, try to find a part with dots
+                    if (!configKey.includes('.')) {
+                        for (let i = parts.length - 1; i >= 0; i--) {
+                            if (parts[i].includes('.')) {
+                                configKey = parts[i];
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Look up the value in the flattened config
+                if (flatConfig.hasOwnProperty(configKey)) {
+                    const value = flatConfig[configKey];
+                    input.value = value !== null && value !== undefined ? String(value) : '';
+                }
+            });
+            
+            // Update common value inputs if they exist
+            const commonValueInputs = document.querySelectorAll('.common-value-input');
+            
+            commonValueInputs.forEach(input => {
+                const fullKey = input.dataset.key;
+                
+                // Same logic for common values
+                let configKey = fullKey;
+                
+                if (fullKey.includes('/')) {
+                    const parts = fullKey.split('/');
+                    configKey = parts[parts.length - 1];
+                    
+                    if (!configKey.includes('.')) {
+                        for (let i = parts.length - 1; i >= 0; i--) {
+                            if (parts[i].includes('.')) {
+                                configKey = parts[i];
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (flatConfig.hasOwnProperty(configKey)) {
+                    const value = flatConfig[configKey];
+                    input.value = value !== null && value !== undefined ? String(value) : '';
+                }
+            });
+        }
+
+        // Show template selection status
+        function showTemplateStatus(filename) {
+            const statusDiv = document.getElementById('templateStatus');
+            const statusText = document.getElementById('templateStatusText');
+            
+            if (statusDiv && statusText) {
+                statusText.textContent = `Using ${filename} as template`;
+                statusDiv.style.display = 'block';
+            }
+        }
+
+        // Helper function to flatten nested objects (similar to backend)
+        function flattenObject(obj, prefix = '') {
+            const result = {};
+            
+            for (const key in obj) {
+                if (obj.hasOwnProperty(key)) {
+                    const newKey = prefix ? `${prefix}.${key}` : key;
+                    
+                    if (obj[key] !== null && typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
+                        // Recursively flatten nested objects
+                        Object.assign(result, flattenObject(obj[key], newKey));
+                    } else {
+                        // Store the value (including arrays and primitives)
+                        result[newKey] = obj[key];
+                    }
+                }
+            }
+            
+            return result;
         }
 
         // Start auto-refresh timer
