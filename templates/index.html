@@ -450,6 +450,43 @@
             cursor: not-allowed;
         }
 
+        /* Collapsible diff items */
+        .diff-key-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            padding: 8px 12px;
+            background-color: #2d2d30;
+            border-radius: 3px;
+            margin-bottom: 8px;
+            transition: background-color 0.2s ease;
+        }
+
+        .diff-key-header:hover {
+            background-color: #3e3e42;
+        }
+
+        .collapse-indicator {
+            font-size: 14px;
+            color: #569cd6;
+            transition: transform 0.2s ease;
+            user-select: none;
+        }
+
+        .diff-item.collapsed .collapse-indicator {
+            transform: rotate(-90deg);
+        }
+
+        .diff-values {
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+
+        .diff-values.collapsed {
+            display: none !important;
+        }
+
         .diff-value-with-override {
             display: flex;
             flex-direction: column;
@@ -809,10 +846,18 @@
             let diffHtml = header;
             
             differences.forEach((diff, index) => {
+                // Check if this is the seed key and should be collapsed by default
+                const configKey = extractConfigKey(diff.key);
+                const isSeedKey = configKey === 'seed';
+                const isCollapsed = isSeedKey; // Collapse seed by default
+                
                 diffHtml += `
-                    <div class="diff-item">
-                        <div class="diff-key">${diff.key}</div>
-                        <div class="diff-values">
+                    <div class="diff-item ${isCollapsed ? 'collapsed' : ''}">
+                        <div class="diff-key-header" onclick="toggleDiffItem(this)">
+                            <span class="diff-key">${diff.key}</span>
+                            <span class="collapse-indicator">${isCollapsed ? '▶' : '▼'}</span>
+                        </div>
+                        <div class="diff-values" style="display: ${isCollapsed ? 'none' : 'block'}">
                 `;
                 
                 // Get the first file's value as default for new config
@@ -1380,6 +1425,25 @@
             }
             
             return configKey;
+        }
+
+        // Toggle collapse/expand for diff items
+        function toggleDiffItem(headerElement) {
+            const diffItem = headerElement.closest('.diff-item');
+            const diffValues = headerElement.nextElementSibling;
+            const indicator = headerElement.querySelector('.collapse-indicator');
+            
+            if (diffValues.style.display === 'none') {
+                // Expand
+                diffValues.style.display = 'block';
+                indicator.textContent = '▼';
+                diffItem.classList.remove('collapsed');
+            } else {
+                // Collapse
+                diffValues.style.display = 'none';
+                indicator.textContent = '▶';
+                diffItem.classList.add('collapsed');
+            }
         }
 
         // Helper function to flatten nested objects (similar to backend)
