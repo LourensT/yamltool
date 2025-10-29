@@ -775,11 +775,154 @@ def submit_slurm_job():
             # Clean up temporary file
             try:
                 os.unlink(sbatch_file_path)
-            except:
+            except Exception:
                 pass
                 
     except Exception as e:
         return jsonify({'error': f'Failed to submit job: {str(e)}'}), 500
+
+@app.route('/api/submit-batch-slurm', methods=['POST'])
+def submit_batch_slurm_jobs():
+    """Submit multiple SLURM jobs with the same settings."""
+    
+    sbatch_dir = os.path.dirname(CONFIG['paths']['slurm_template_file'])
+    config_dir = CONFIG['paths']['configs_directory']
+    relative_config_path = os.path.relpath(config_dir, sbatch_dir)
+
+    data = request.get_json()
+    job_prefix = data.get('jobPrefix', '').strip()
+    config_paths = data.get('configPaths', [])
+    use_gpu = data.get('useGpu', False)
+    memory = data.get('memory', '64G')
+    runtime = data.get('runtime', '12:00:00')
+
+    print(f"Batch SLURM submission received:")
+    print(f"  Job prefix: {job_prefix}")
+    print(f"  Config paths: {config_paths}")
+    print(f"  Total configs: {len(config_paths)}")
+    print(f"  Use GPU: {use_gpu}, Memory: {memory}, Runtime: {runtime}")
+
+    if not job_prefix:
+        return jsonify({'error': 'Job prefix is required'}), 400
+    
+    if not config_paths:
+        return jsonify({'error': 'At least one config path is required'}), 400
+
+    successful_jobs = []
+    failed_jobs = []
+    manual_submission_jobs = []
+    queue_status = None
+
+    try:
+        for i, config_path in enumerate(config_paths):
+            print(f"Processing job {i+1}/{len(config_paths)}: {config_path}")
+            try:
+                # Generate job name from config filename
+                config_filename = Path(config_path).name.split('.')[0]  # Remove extension
+                job_name = f"{job_prefix}_{config_filename}"
+                print(f"  Generated job name: {job_name}")
+                
+                # Create relative path for sbatch script
+                relative_config = os.path.join(relative_config_path, config_path.strip())
+                print(f"  Relative config path: {relative_config}")
+                
+                # Create sbatch file content
+                sbatch_content = create_sbatch_content(job_name, use_gpu, memory, runtime, relative_config)
+                
+                # For batch jobs, create the sbatch file directly in the working directory
+                # instead of using temporary files, to ensure each job gets its own file
+                working_dir = CONFIG['paths']['working_directory']
+                local_sbatch_name = f"run_{job_name}.sh"
+                sbatch_file_path = os.path.join(working_dir, local_sbatch_name)
+                
+                # Create the sbatch file
+                with open(sbatch_file_path, 'w') as f:
+                    f.write(sbatch_content)
+                os.chmod(sbatch_file_path, 0o755)
+                
+                print(f"  Created sbatch file: {sbatch_file_path}")
+                
+                try:
+                    # Submit job via SSH
+                    print(f"  Attempting SSH submission for {job_name}...")
+                    job_result = submit_job_via_ssh(sbatch_file_path, job_name)
+                    print(f"  SSH submission result: {job_result.get('status', 'unknown')}")
+                    
+                    # Capture queue status from the last successful connection (most up-to-date)
+                    if job_result.get('queue_status'):
+                        queue_status = job_result.get('queue_status')
+                    
+                    if job_result.get('manual_submission'):
+                        print(f"  Job {job_name} requires manual submission")
+                        manual_submission_jobs.append({
+                            'jobName': job_name,
+                            'configPath': config_path,
+                            'sbatchFile': job_result.get('sbatchFile', local_sbatch_name),
+                            'message': job_result.get('message', ''),
+                            'instructions': job_result.get('instructions', ''),
+                            'error': job_result.get('error')
+                        })
+                    else:
+                        print(f"  Job {job_name} submitted successfully with ID: {job_result.get('jobId')}")
+                        successful_jobs.append({
+                            'jobName': job_name,
+                            'configPath': config_path,
+                            'jobId': job_result.get('jobId'),
+                            'sbatchFile': local_sbatch_name,
+                            'message': job_result.get('message', 'Job submitted successfully')
+                        })
+                        
+                except Exception as ssh_error:
+                    # If SSH submission fails, we still have the file created, so treat as manual submission
+                    print(f"  SSH submission failed for {job_name}: {ssh_error}")
+                    manual_submission_jobs.append({
+                        'jobName': job_name,
+                        'configPath': config_path,
+                        'sbatchFile': local_sbatch_name,
+                        'message': f'Sbatch file created for manual submission: {local_sbatch_name}',
+                        'instructions': f"""
+MANUAL SUBMISSION REQUIRED:
+
+Copy and paste these commands in your terminal:
+
+ssh {CONFIG['slurm']['ssh_host']}
+cd {working_dir}
+sbatch {sbatch_file_path}
+squeue -u $USER
+exit
+
+The sbatch file has been created at: {sbatch_file_path}
+""",
+                        'error': f'SSH submission failed: {str(ssh_error)}'
+                    })
+                    
+            except Exception as e:
+                print(f"  Failed to process job {i+1}/{len(config_paths)} ({config_path}): {e}")
+                failed_jobs.append({
+                    'jobName': f"{job_prefix}_{Path(config_path).name.split('.')[0]}",
+                    'configPath': config_path,
+                    'error': f'Failed to submit job: {str(e)}'
+                })
+                
+            print(f"  Completed job {i+1}/{len(config_paths)}")
+
+        print(f"Batch processing complete:")
+        print(f"  Successful: {len(successful_jobs)}")
+        print(f"  Manual submission: {len(manual_submission_jobs)}")
+        print(f"  Failed: {len(failed_jobs)}")
+
+        return jsonify({
+            'successful': successful_jobs,
+            'failed': failed_jobs,
+            'manual_submission': manual_submission_jobs,
+            'total_submitted': len(successful_jobs),
+            'total_failed': len(failed_jobs),
+            'total_manual': len(manual_submission_jobs),
+            'queue_status': queue_status
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Batch submission failed: {str(e)}'}), 500
 
 def parse_runtime_hours(runtime_str):
     """Parse runtime string (HH:MM:SS) and return total hours as float."""
@@ -1029,28 +1172,30 @@ def manual_submission_fallback(sbatch_file_path, job_name, error_msg=None):
     """Fallback to manual submission instructions."""
     import os
     
-    ssh_config = CONFIG['ssh']
     slurm_config = CONFIG['slurm']
     working_dir = CONFIG['paths']['working_directory']
     ssh_host = slurm_config['ssh_host']
     
     print("Falling back to manual submission...")
     
-    # Read the sbatch file content
-    with open(sbatch_file_path, 'r') as f:
-        sbatch_content = f.read()
-    
-    # Create a local copy with a proper name
+    # Check if the file is already in the working directory (batch job case)
     local_sbatch_name = f"run_{job_name}.sh"
     local_sbatch_path = os.path.join(working_dir, local_sbatch_name)
     
-    with open(local_sbatch_path, 'w') as f:
-        f.write(sbatch_content)
-    
-    # Make it executable
-    os.chmod(local_sbatch_path, 0o755)
-    
-    print(f"Created sbatch file: {local_sbatch_path}")
+    if os.path.abspath(sbatch_file_path) == os.path.abspath(local_sbatch_path):
+        # File is already in the right place (batch submission case)
+        print(f"Sbatch file already exists: {local_sbatch_path}")
+    else:
+        # Read the sbatch file content and create a local copy (single submission case)
+        with open(sbatch_file_path, 'r') as f:
+            sbatch_content = f.read()
+        
+        with open(local_sbatch_path, 'w') as f:
+            f.write(sbatch_content)
+        
+        # Make it executable
+        os.chmod(local_sbatch_path, 0o755)
+        print(f"Created sbatch file: {local_sbatch_path}")
     
     # Create manual instructions (without error section since it's shown separately in UI)
     instructions = f"""

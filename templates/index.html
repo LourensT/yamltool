@@ -68,8 +68,14 @@
             width: 50%;
             background-color: #252526;
             border-right: 1px solid #3e3e42;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #treeContainer {
+            flex: 1;
             overflow-y: auto;
-            padding: 20px;
+            padding: 10px 20px 20px 20px;
         }
 
         .right-panels {
@@ -139,6 +145,77 @@
 
         .tree-node.selected {
             background-color: #094771;
+        }
+
+        .tree-node.multi-selected {
+            background-color: #094771;
+            border-left: 3px solid #0078d4;
+        }
+
+        .multi-selection-info {
+            background-color: #252526;
+            border: 1px solid #0078d4;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 15px;
+            color: #0078d4;
+        }
+
+        .multi-selection-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .batch-submit-btn {
+            background-color: #0078d4;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .batch-submit-btn:hover:not(:disabled) {
+            background-color: #106ebe;
+        }
+
+        .batch-submit-btn:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
+        .clear-selection-btn {
+            background-color: #666;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .clear-selection-btn:hover {
+            background-color: #777;
+        }
+
+        .panel-header {
+            padding: 15px 20px 10px 20px;
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .panel-title {
+            color: #569cd6;
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .panel-subtitle {
+            color: #9cdcfe;
+            font-size: 11px;
+            opacity: 0.8;
         }
 
         .tree-icon {
@@ -661,6 +738,99 @@
             border: 1px solid #2196f3;
             color: #87ceeb;
         }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+
+        .modal-content {
+            background-color: #2d2d30;
+            border-radius: 8px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80%;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #444;
+        }
+
+        .modal-header h3 {
+            color: #569cd6;
+            margin: 0;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #ccc;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            color: #fff;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .batch-files-list {
+            background-color: #1e1e1e;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 3px solid #0078d4;
+        }
+
+        .batch-files-list ul {
+            margin: 10px 0 0 20px;
+            color: #ccc;
+        }
+
+        .batch-files-list li {
+            margin: 3px 0;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+        }
+
+        .cancel-btn {
+            background-color: #666;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+
+        .cancel-btn:hover {
+            background-color: #777;
+        }
     </style>
 </head>
 <body>
@@ -675,6 +845,12 @@
     <div class="container">
         <div class="content">
             <div class="tree-panel">
+                <div class="panel-header">
+                    <div class="panel-title">Configuration Files</div>
+                    <div class="panel-subtitle">
+                        Click to select • Ctrl+Click to multi-select • Shift+Click to range-select
+                    </div>
+                </div>
                 <div id="treeContainer">
                     <div class="loading">Loading configuration tree...</div>
                 </div>
@@ -776,9 +952,27 @@
             return html;
         }
 
+        // Track selected files for multi-selection
+        let selectedFiles = new Set();
+        let lastSelectedIndex = -1;
+
         // Handle tree node clicks
         function handleTreeNodeClick(event) {
             event.stopPropagation();
+            
+            const path = event.currentTarget.dataset.path;
+            const type = event.currentTarget.dataset.type;
+            const isFile = type === 'file';
+            
+            // Handle multi-selection for files only
+            if (isFile && (event.shiftKey || event.ctrlKey || event.metaKey)) {
+                handleMultiSelection(event.currentTarget, path, event.shiftKey);
+                updateMultiSelectionUI();
+                return;
+            }
+            
+            // Single selection (or directory selection)
+            clearMultiSelection();
             
             // Remove previous selection
             document.querySelectorAll('.tree-node.selected').forEach(node => {
@@ -788,11 +982,161 @@
             // Add selection to clicked node
             event.currentTarget.classList.add('selected');
             
-            const path = event.currentTarget.dataset.path;
-            const type = event.currentTarget.dataset.type;
+            if (isFile) {
+                selectedFiles.add(path);
+                
+                // Update lastSelectedIndex for future shift-clicks
+                const allFileNodes = Array.from(document.querySelectorAll('.tree-node[data-type="file"]'));
+                lastSelectedIndex = allFileNodes.indexOf(event.currentTarget);
+                
+                updateMultiSelectionUI();
+            }
             
             selectedPath = path;
             loadDifferences(path, type);
+        }
+
+        // Handle multi-selection logic
+        function handleMultiSelection(clickedNode, path, isShiftClick) {
+            const allFileNodes = Array.from(document.querySelectorAll('.tree-node[data-type="file"]'));
+            const clickedIndex = allFileNodes.indexOf(clickedNode);
+            
+            if (isShiftClick && lastSelectedIndex !== -1) {
+                // Shift-click: select range
+                const start = Math.min(lastSelectedIndex, clickedIndex);
+                const end = Math.max(lastSelectedIndex, clickedIndex);
+                
+                console.log(`Shift-click range selection: ${start} to ${end} (lastSelected: ${lastSelectedIndex}, clicked: ${clickedIndex})`);
+                
+                for (let i = start; i <= end; i++) {
+                    const node = allFileNodes[i];
+                    const nodePath = node.dataset.path;
+                    selectedFiles.add(nodePath);
+                    node.classList.add('selected');
+                }
+                
+                // Don't update lastSelectedIndex for shift-click, keep the anchor point
+            } else {
+                // Ctrl/Cmd-click: toggle individual selection
+                if (selectedFiles.has(path)) {
+                    selectedFiles.delete(path);
+                    clickedNode.classList.remove('selected');
+                } else {
+                    selectedFiles.add(path);
+                    clickedNode.classList.add('selected');
+                }
+                
+                // Update lastSelectedIndex for future shift-clicks
+                lastSelectedIndex = clickedIndex;
+            }
+            
+            // Update the right panel to show multi-selection info
+            updateRightPanelForMultiSelection();
+        }
+
+        // Clear multi-selection
+        function clearMultiSelection() {
+            selectedFiles.clear();
+            // Don't reset lastSelectedIndex here - we want to keep it for subsequent shift-clicks
+            document.querySelectorAll('.tree-node.multi-selected').forEach(node => {
+                node.classList.remove('multi-selected');
+            });
+        }
+
+        // Update UI to show multi-selection state
+        function updateMultiSelectionUI() {
+            // Update visual state of selected nodes
+            document.querySelectorAll('.tree-node[data-type="file"]').forEach(node => {
+                const path = node.dataset.path;
+                if (selectedFiles.has(path)) {
+                    node.classList.add('multi-selected');
+                } else {
+                    node.classList.remove('multi-selected');
+                }
+            });
+        }
+
+        // Update the right panel to show multi-selection info
+        function updateRightPanelForMultiSelection() {
+            if (selectedFiles.size > 1) {
+                const container = document.getElementById('diffContainer');
+                const fileList = Array.from(selectedFiles);
+                const fileNames = fileList.map(path => path.split('/').pop()).join(', ');
+                const baseJobName = fileList[0].split('/').pop().replace(/\.(yaml|yml|json)$/, '');
+                
+                container.innerHTML = `
+                    <div class="diff-header">
+                        <div class="diff-title">Multiple Files Selected</div>
+                        <div class="diff-subtitle">${selectedFiles.size} files selected</div>
+                    </div>
+                    <div class="multi-selection-info">
+                        <strong>Selected files:</strong>
+                        <div class="batch-files-list">
+                            <ul>
+                                ${fileList.map(path => `<li>${path}</li>`).join('')}
+                            </ul>
+                        </div>
+                        
+                        <div class="slurm-form">
+                            <h3>Submit ${selectedFiles.size} Jobs to SLURM</h3>
+                            <div class="slurm-form-group">
+                                <label for="batchJobPrefix">Job Name Prefix:</label>
+                                <input type="text" id="batchJobPrefix" value="${baseJobName}" required>
+                                <small>Each job will be named: {prefix}_{filename}</small>
+                            </div>
+                            <div class="slurm-form-group">
+                                <label for="batchUseGpu">Use GPU:</label>
+                                <input type="checkbox" id="batchUseGpu" checked>
+                            </div>
+                            <div class="slurm-form-group">
+                                <label for="batchMemory">Memory:</label>
+                                <select id="batchMemory">
+                                    <option value="32G">32G</option>
+                                    <option value="64G" selected>64G</option>
+                                    <option value="128G">128G</option>
+                                    <option value="256G">256G</option>
+                                </select>
+                            </div>
+                            <div class="slurm-form-group">
+                                <label for="batchRuntime">Runtime (HH:MM:SS):</label>
+                                <select id="batchRuntime">
+                                    <option value="01:00:00">1 hour</option>
+                                    <option value="02:00:00">2 hours</option>
+                                    <option value="04:00:00">4 hours</option>
+                                    <option value="08:00:00">8 hours</option>
+                                    <option value="12:00:00" selected>12 hours</option>
+                                    <option value="24:00:00">24 hours</option>
+                                    <option value="48:00:00">48 hours</option>
+                                    <option value="72:00:00">72 hours</option>
+                                </select>
+                            </div>
+                            <div class="slurm-form-actions">
+                                <button onclick="submitBatchSlurmJobsInline()" class="submit-job-btn">
+                                    Submit All ${selectedFiles.size} Jobs
+                                </button>
+                                <button onclick="clearMultiSelectionAndReset()" class="clear-selection-btn">
+                                    Clear Selection
+                                </button>
+                            </div>
+                            <div id="batchJobStatus" class="job-status"></div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Clear multi-selection and reset the right panel
+        function clearMultiSelectionAndReset() {
+            clearMultiSelection();
+            updateMultiSelectionUI();
+            selectedPath = '';
+            const container = document.getElementById('diffContainer');
+            container.innerHTML = `
+                <div class="diff-header">
+                    <div class="diff-title">Configuration Differences</div>
+                    <div class="diff-subtitle">Select a file or folder to view differences</div>
+                </div>
+            `;
         }
 
         // Load differences for a specific path
@@ -833,17 +1177,20 @@
                 </div>
             `;
             
+            // Check if we have multiple files selected
+            const multiSelectionHtml = renderMultiSelectionInfo();
+
             if (differences.length === 0) {
                 if (type === 'file') {
                     // Show SLURM configuration form for single files
-                    container.innerHTML = header + renderSlurmForm(path);
+                    container.innerHTML = header + multiSelectionHtml + renderSlurmForm(path);
                 } else {
-                    container.innerHTML = header + '<div class="no-differences">No differences found</div>';
+                    container.innerHTML = header + multiSelectionHtml + '<div class="no-differences">No differences found</div>';
                 }
                 return;
             }
             
-            let diffHtml = header;
+            let diffHtml = header + multiSelectionHtml;
             
             differences.forEach((diff, index) => {
                 // Check if this is the seed key and should be collapsed by default
@@ -1494,6 +1841,123 @@
                     setStatus(false);
                 }
             }, 2000); // Check every 2 seconds
+        }
+
+        // Render multi-selection information and controls
+        function renderMultiSelectionInfo() {
+            if (selectedFiles.size <= 1) {
+                return '';
+            }
+            
+            const fileList = Array.from(selectedFiles).map(path => path.split('/').pop()).join(', ');
+            
+            return `
+                <div class="multi-selection-info">
+                    <strong>${selectedFiles.size} files selected:</strong> ${fileList}
+                    <div class="multi-selection-controls">
+                        <button onclick="showBatchSlurmForm()" class="batch-submit-btn">
+                            Submit All to SLURM
+                        </button>
+                        <button onclick="clearMultiSelection(); updateMultiSelectionUI(); loadDifferences(selectedPath, 'directory')" class="clear-selection-btn">
+                            Clear Selection
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+
+
+        // Submit batch SLURM jobs (inline version)
+        async function submitBatchSlurmJobsInline() {
+            const jobPrefix = document.getElementById('batchJobPrefix').value.trim();
+            const useGpu = document.getElementById('batchUseGpu').checked;
+            const memory = document.getElementById('batchMemory').value;
+            const runtime = document.getElementById('batchRuntime').value;
+            const statusDiv = document.getElementById('batchJobStatus');
+            const submitBtn = document.querySelector('.submit-job-btn');
+
+            if (!jobPrefix) {
+                statusDiv.innerHTML = '<div class="error">Please enter a job name prefix</div>';
+                return;
+            }
+
+            const fileList = Array.from(selectedFiles);
+            
+            console.log('Batch submission initiated:');
+            console.log('Selected files:', selectedFiles);
+            console.log('File list array:', fileList);
+            console.log('Job prefix:', jobPrefix);
+            console.log('Total files to submit:', fileList.length);
+            
+            // Disable button and show loading
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+            statusDiv.innerHTML = `<div class="info">Submitting ${fileList.length} batch jobs...</div>`;
+
+            try {
+                const requestPayload = {
+                    jobPrefix: jobPrefix,
+                    configPaths: fileList,
+                    useGpu: useGpu,
+                    memory: memory,
+                    runtime: runtime
+                };
+                
+                console.log('Sending batch request:', requestPayload);
+                
+                const response = await fetch('/api/submit-batch-slurm', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestPayload)
+                });
+
+                const result = await response.json();
+                console.log('Batch submission result:', result);
+
+                if (response.ok) {
+                    let statusHtml = `<div class="success"><strong>Batch submission completed!</strong><br>`;
+                    
+                    if (result.successful && result.successful.length > 0) {
+                        statusHtml += `Successfully submitted ${result.successful.length} jobs:<br>`;
+                        result.successful.forEach(job => {
+                            statusHtml += `• ${job.jobName}: ${job.jobId || 'Created'}<br>`;
+                        });
+                    }
+                    
+                    if (result.failed && result.failed.length > 0) {
+                        statusHtml += `<br><div class="error">Failed to submit ${result.failed.length} jobs:<br>`;
+                        result.failed.forEach(job => {
+                            statusHtml += `• ${job.jobName}: ${job.error}<br>`;
+                        });
+                        statusHtml += `</div>`;
+                    }
+                    
+                    if (result.manual_submission && result.manual_submission.length > 0) {
+                        statusHtml += `<br><div class="info">Manual submission required for ${result.manual_submission.length} jobs.<br>`;
+                        statusHtml += `Check individual job forms for instructions.</div>`;
+                    }
+                    
+                    statusHtml += `</div>`;
+                    statusDiv.innerHTML = statusHtml;
+
+                    // Display queue status if available
+                    if (result.queue_status) {
+                        displayQueueStatus(result.queue_status);
+                    }
+                } else {
+                    statusDiv.innerHTML = `<div class="error"><strong>Error:</strong> ${result.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Error submitting batch jobs:', error);
+                statusDiv.innerHTML = `<div class="error">Failed to submit batch jobs: ${error.message}</div>`;
+            } finally {
+                // Re-enable button
+                submitBtn.disabled = false;
+                submitBtn.textContent = `Submit All ${fileList.length} Jobs`;
+            }
         }
 
         // Render SLURM configuration form
