@@ -234,6 +234,39 @@
             margin-left: 20px;
         }
 
+        .tree-children.collapsed {
+            display: none;
+        }
+
+        .tree-expand-icon {
+            width: 12px;
+            height: 12px;
+            margin-right: 4px;
+            cursor: pointer;
+            color: #cccccc;
+            font-size: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .tree-expand-icon:hover {
+            color: #ffffff;
+        }
+
+        .tree-expand-icon.collapsed::before {
+            content: '▶';
+        }
+
+        .tree-expand-icon.expanded::before {
+            content: '▼';
+        }
+
+        .tree-node {
+            display: flex;
+            align-items: center;
+        }
+
         .file-icon {
             color: #87ceeb;
         }
@@ -919,6 +952,11 @@
             container.querySelectorAll('.tree-node').forEach(node => {
                 node.addEventListener('click', handleTreeNodeClick);
             });
+            
+            // Add expand/collapse handlers
+            container.querySelectorAll('.tree-expand-icon').forEach(icon => {
+                icon.addEventListener('click', handleExpandCollapseClick);
+            });
         }
 
         // Render a single tree node
@@ -933,6 +971,10 @@
                 html += `
                     <div class="tree-item" style="margin-left: ${level * 20}px">
                         <div class="tree-node" data-path="${currentPath}" data-type="${data.type}">
+                            ${hasChildren ? 
+                                `<span class="tree-expand-icon expanded" data-path="${currentPath}"></span>` : 
+                                '<span style="width: 16px; display: inline-block;"></span>'
+                            }
                             <span class="tree-icon ${isDirectory ? 'folder-icon' : 'file-icon'}">
                                 ${isDirectory ? (hasChildren ? '📁' : '📂') : '📄'}
                             </span>
@@ -941,7 +983,7 @@
                 `;
                 
                 if (isDirectory && hasChildren) {
-                    html += `<div class="tree-children">`;
+                    html += `<div class="tree-children" data-parent="${currentPath}">`;
                     html += renderTreeNode(data.children, currentPath, level + 1);
                     html += `</div>`;
                 }
@@ -959,6 +1001,11 @@
         // Handle tree node clicks
         function handleTreeNodeClick(event) {
             event.stopPropagation();
+            
+            // Don't handle clicks on expand/collapse icons
+            if (event.target.classList.contains('tree-expand-icon')) {
+                return;
+            }
             
             const path = event.currentTarget.dataset.path;
             const type = event.currentTarget.dataset.type;
@@ -1156,6 +1203,29 @@
                 setStatus(false);
                 document.getElementById('diffContainer').innerHTML = 
                     '<div class="error">Error loading differences</div>';
+            }
+        }
+
+        // Handle expand/collapse clicks
+        function handleExpandCollapseClick(event) {
+            event.stopPropagation();
+            
+            const icon = event.currentTarget;
+            const path = icon.dataset.path;
+            const children = document.querySelector(`.tree-children[data-parent="${path}"]`);
+            
+            if (!children) return;
+            
+            if (icon.classList.contains('expanded')) {
+                // Collapse
+                icon.classList.remove('expanded');
+                icon.classList.add('collapsed');
+                children.classList.add('collapsed');
+            } else {
+                // Expand
+                icon.classList.remove('collapsed');
+                icon.classList.add('expanded');
+                children.classList.remove('collapsed');
             }
         }
 
